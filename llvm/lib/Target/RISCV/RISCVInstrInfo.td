@@ -2179,6 +2179,9 @@ include "RISCVInstrInfoZicbo.td"
 include "RISCVInstrInfoZicond.td"
 include "RISCVInstrInfoZicfiss.td"
 
+// CHERI
+include "RISCVInstrInfoY.td"
+
 //===----------------------------------------------------------------------===//
 // Vendor extensions
 //===----------------------------------------------------------------------===//

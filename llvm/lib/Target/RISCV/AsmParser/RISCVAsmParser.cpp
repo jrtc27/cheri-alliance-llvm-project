@@ -857,6 +857,16 @@ public:
            VK == RISCVMCExpr::VK_RISCV_None;
   }
 
+  bool isUImm7EqXLen() const {
+    if (!isImm())
+      return false;
+    int64_t Imm;
+    RISCVMCExpr::VariantKind VK = RISCVMCExpr::VK_RISCV_None;
+    bool IsConstantImm = evaluateConstantImm(getImm(), Imm, VK);
+    return IsConstantImm && (isRV64Imm() ? Imm == 64 : Imm == 32) &&
+           VK == RISCVMCExpr::VK_RISCV_None;
+  }
+
   bool isUImm8GE32() const {
     int64_t Imm;
     RISCVMCExpr::VariantKind VK = RISCVMCExpr::VK_RISCV_None;
@@ -904,6 +914,16 @@ public:
       return false;
     bool IsConstantImm = evaluateConstantImm(getImm(), Imm, VK);
     return IsConstantImm && Imm >= INT64_C(2) && Imm <= INT64_C(14) &&
+           VK == RISCVMCExpr::VK_RISCV_None;
+  }
+
+  bool isYBNDSWImm() const {
+    if (!isImm())
+      return false;
+    int64_t Imm;
+    RISCVMCExpr::VariantKind VK = RISCVMCExpr::VK_RISCV_None;
+    bool IsConstantImm = evaluateConstantImm(getImm(), Imm, VK);
+    return IsConstantImm && RISCV::isValidYBNDSWImm(Imm) &&
            VK == RISCVMCExpr::VK_RISCV_None;
   }
 
@@ -2022,6 +2042,17 @@ bool RISCVAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_InvalidRegReg: {
     SMLoc ErrorLoc = ((RISCVOperand &)*Operands[ErrorInfo]).getStartLoc();
     return Error(ErrorLoc, "operands must be register and register");
+  }
+  case Match_InvalidYBNDSWImm: {
+    const SMLoc ErrorLoc = ((RISCVOperand &)*Operands[ErrorInfo]).getStartLoc();
+    return Error(ErrorLoc, "immediate must be an integer in the range "
+                           "[1, 255], a multiple of 8 in the range [256, 504], "
+                           "or a multiple of 16 in the range [512, 4096]");
+  }
+  case Match_InvalidUImm7EqXLen: {
+    const SMLoc ErrorLoc = ((RISCVOperand &)*Operands[ErrorInfo]).getStartLoc();
+    return Error(ErrorLoc, "immediate must be an integer equal to XLEN (" +
+                               Twine(isRV64() ? "64" : "32") + ")");
   }
   case Match_InvalidCSetBndImm: {
     const SMLoc ErrorLoc = ((RISCVOperand &)*Operands[ErrorInfo]).getStartLoc();
