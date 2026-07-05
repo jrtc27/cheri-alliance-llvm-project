@@ -67,7 +67,9 @@ ABI computeTargetABI(const Triple &TT, const FeatureBitset &FeatureBits,
               "target-abi)\n";
     TargetABI = ABI_Unknown;
   } else if ((ABIName.starts_with("il32pc") || ABIName.starts_with("l64pc")) &&
-             !(FeatureBits[RISCV::FeatureStdExtXCheri] || FeatureBits[RISCV::FeatureStdExtZCheriPureCap])) {
+             !(FeatureBits[RISCV::FeatureStdExtXCheri] ||
+               FeatureBits[RISCV::FeatureStdExtY] ||
+               FeatureBits[RISCV::FeatureStdExtZCheriPureCap])) {
     errs() << "Pure-capability ABI can't be used for a target that "
               "doesn't support the XCheri instruction set extension (ignoring "
               "target-abi)\n";

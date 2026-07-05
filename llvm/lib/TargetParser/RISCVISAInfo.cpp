@@ -601,7 +601,7 @@ RISCVISAInfo::parseArchString(StringRef Arch, bool EnableExperimentalExtension,
 
   if (XLen == 0 || Arch.empty())
     return getError(
-        "string must begin with rv32{i,e,g}, rv64{i,e,g}, or a supported "
+        "string must begin with rv32{i,e,g,y}, rv64{i,e,g,y}, or a supported "
         "profile name");
 
   std::unique_ptr<RISCVISAInfo> ISAInfo(new RISCVISAInfo(XLen));
@@ -614,11 +614,11 @@ RISCVISAInfo::parseArchString(StringRef Arch, bool EnableExperimentalExtension,
 
   unsigned Major, Minor, ConsumeLength;
 
-  // First letter should be 'e', 'i' or 'g'.
+  // First letter should be 'e', 'i', 'g' or 'y'.
   switch (Baseline) {
   default:
     return getError("first letter after \'rv" + Twine(XLen) +
-                    "\' should be 'e', 'i' or 'g'");
+                    "\' should be 'e', 'i', 'g' or 'y'");
   case 'e':
   case 'i':
     // Baseline is `i` or `e`
@@ -629,6 +629,22 @@ RISCVISAInfo::parseArchString(StringRef Arch, bool EnableExperimentalExtension,
 
     ISAInfo->Exts[std::string(1, Baseline)] = {Major, Minor};
     break;
+  case 'y': {
+    // If the first character is 'y', this is equivalent to "iy".
+    // TODO: arch string syntax for RVE+RVY (and y in non-first position) will
+    // be included following conclusion of "long base name" syntax
+    // https://lists.riscv.org/g/tech-unprivileged/message/1134
+    if (auto E = getExtensionVersion("y", Arch, Major, Minor, ConsumeLength,
+                                     EnableExperimentalExtension,
+                                     ExperimentalExtensionVersionCheck))
+      return std::move(E);
+
+    ISAInfo->Exts["y"] = {Major, Minor};
+    auto IVersion = findDefaultVersion("i");
+    assert(IVersion && "Default 'i' extension version not found?");
+    ISAInfo->Exts["i"] = {IVersion->Major, IVersion->Minor};
+    break;
+  }
   case 'g':
     // g expands to extensions in RISCVGImplications.
     if (!Arch.empty() && isDigit(Arch.front()))
@@ -726,6 +742,10 @@ static Error getIncompatibleError(StringRef Ext1, StringRef Ext2) {
                   "' extensions are incompatible");
 }
 
+static Error getBaseIncompatibleError(StringRef Ext, StringRef Base) {
+  return getError("'" + Ext + "' is incompatible with " + Base + " base");
+}
+
 static Error getExtensionRequiresError(StringRef Ext, StringRef ReqExt) {
   return getError("'" + Ext + "' requires '" + ReqExt +
                   "' extension to also be specified");
@@ -772,6 +792,18 @@ Error RISCVISAInfo::checkDependency() {
 
     if (Exts.count("zcb") != 0)
       return getIncompatibleError("xwchc", "zcb");
+  }
+
+  if (Exts.count("y") != 0) {
+    if (XLen == 32) {
+      // On RV32Y systems the zcf encodings are used for y load/stores.
+      if (Exts.count("zcf") != 0)
+        return getBaseIncompatibleError("zcf", "rv32y");
+    } else {
+      // On RV64Y systems the zcd encodings are used for y load/stores.
+      if (Exts.count("zcd") != 0)
+        return getBaseIncompatibleError("zcd", "rv64y");
+    }
   }
 
   for (auto Ext : XqciExts)
@@ -838,9 +870,9 @@ void RISCVISAInfo::updateImplication() {
                   });
   }
 
-  // Add Zcf if Zce and F are enabled on RV32.
+  // Add Zcf if Zce and F are enabled on RV32 and Y is not enabled.
   if (XLen == 32 && Exts.count("zce") && Exts.count("f") &&
-      !Exts.count("zcf")) {
+      !Exts.count("zcf") && !Exts.count("y")) {
     auto Version = findDefaultVersion("zcf");
     Exts["zcf"] = *Version;
   }

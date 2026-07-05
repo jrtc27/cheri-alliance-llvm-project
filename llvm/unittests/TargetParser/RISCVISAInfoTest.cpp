@@ -172,25 +172,104 @@ TEST(ParseArchString, RejectsInvalidChars) {
 
 TEST(ParseArchString, RejectsInvalidBaseISA) {
   for (StringRef Input : {"rv32", "rv64", "rv65i"}) {
-    EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
-              "string must begin with rv32{i,e,g}, rv64{i,e,g}, or a supported "
-              "profile name");
+    EXPECT_EQ(
+        toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
+        "string must begin with rv32{i,e,g,y}, rv64{i,e,g,y}, or a supported "
+        "profile name");
   }
 
   for (StringRef Input : {"rv32j", "rv32_i"}) {
     EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
-              "first letter after 'rv32' should be 'e', 'i' or 'g'");
+              "first letter after 'rv32' should be 'e', 'i', 'g' or 'y'");
   }
 
   EXPECT_EQ(toString(RISCVISAInfo::parseArchString("rv64k", true).takeError()),
-            "first letter after 'rv64' should be 'e', 'i' or 'g'");
+            "first letter after 'rv64' should be 'e', 'i', 'g' or 'y'");
+
+  // rv32yi/ye fail because rv32y implicitly enables i, and i/e are not valid
+  // extensions to follow it.
+  for (StringRef Input : {"rv32yi", "rv64yi"}) {
+    EXPECT_EQ(
+        toString(RISCVISAInfo::parseArchString(Input, true, false).takeError()),
+        "invalid standard user-level extension 'i'");
+  }
+  // TODO: arch string syntax for RVE+RVY (and y in non-first position) will be
+  // included following conclusion of
+  // https://lists.riscv.org/g/tech-unprivileged/message/1134
+  for (StringRef Input : {"rv32ye", "rv64ye"}) {
+    EXPECT_EQ(
+        toString(RISCVISAInfo::parseArchString(Input, true, false).takeError()),
+        "invalid standard user-level extension 'e'");
+  }
+  for (StringRef Input : {"rv32y0p99i", "rv64y0p99i"}) {
+    EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
+              "invalid standard user-level extension 'i'");
+  }
+  for (StringRef Input : {"rv32y0p99e", "rv64y0p99e"}) {
+    EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
+              "invalid standard user-level extension 'e'");
+  }
+}
+
+TEST(ParseArchString, RejectsInvalidYPosition) {
+  // y in non-first position is rejected.
+  for (StringRef Input :
+       {"rv32ey0p99", "rv64ey0p99", "rv32iy0p99", "rv64iy0p99"}) {
+    EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
+              "invalid standard user-level extension 'y'");
+  }
+  for (StringRef Input : {"rv32ey", "rv64ey", "rv32iy", "rv64iy"}) {
+    EXPECT_EQ(
+        toString(RISCVISAInfo::parseArchString(Input, true, false).takeError()),
+        "invalid standard user-level extension 'y'");
+  }
+}
+
+TEST(ParseArchString, MissingBaseISA) {
+  // With version check enabled (default), we must specify the version for
+  // experimental extension 'y'.
+  auto MaybeRV32Y = RISCVISAInfo::parseArchString("rv32y0p99", true);
+  ASSERT_THAT_EXPECTED(MaybeRV32Y, Succeeded());
+  RISCVISAInfo &InfoRV32Y = **MaybeRV32Y;
+  const auto &ExtsRV32Y = InfoRV32Y.getExtensions();
+  EXPECT_EQ(ExtsRV32Y.size(), 2UL); // i, y
+  EXPECT_TRUE(ExtsRV32Y.at("i") == (RISCVISAUtils::ExtensionVersion{2, 1}));
+  EXPECT_TRUE(ExtsRV32Y.at("y") == (RISCVISAUtils::ExtensionVersion{0, 99}));
+  EXPECT_EQ(InfoRV32Y.getXLen(), 32U);
+
+  // rv32y0p99m should succeed and contain i, m, y0p99, zmmul
+  auto MaybeRV32YM = RISCVISAInfo::parseArchString("rv32y0p99m", true);
+  ASSERT_THAT_EXPECTED(MaybeRV32YM, Succeeded());
+  RISCVISAInfo &InfoRV32YM = **MaybeRV32YM;
+  EXPECT_EQ(InfoRV32YM.getExtensions().size(), 4UL); // i, m, y, zmmul
+  EXPECT_TRUE(InfoRV32YM.getExtensions().at("i") ==
+              (RISCVISAUtils::ExtensionVersion{2, 1}));
+  EXPECT_TRUE(InfoRV32YM.getExtensions().at("m") ==
+              (RISCVISAUtils::ExtensionVersion{2, 0}));
+  EXPECT_TRUE(InfoRV32YM.getExtensions().at("y") ==
+              (RISCVISAUtils::ExtensionVersion{0, 99}));
+
+  // We can also parse it without version if we disable the version check.
+  auto MaybeRV32YNoVal = RISCVISAInfo::parseArchString("rv32y", true, false);
+  ASSERT_THAT_EXPECTED(MaybeRV32YNoVal, Succeeded());
+  EXPECT_EQ((*MaybeRV32YNoVal)->getExtensions().size(), 2UL);
+
+  auto MaybeRV64Y = RISCVISAInfo::parseArchString("rv64y0p99", true);
+  ASSERT_THAT_EXPECTED(MaybeRV64Y, Succeeded());
+  RISCVISAInfo &InfoRV64Y = **MaybeRV64Y;
+  const auto &ExtsRV64Y = InfoRV64Y.getExtensions();
+  EXPECT_EQ(ExtsRV64Y.size(), 2UL); // i, y
+  EXPECT_TRUE(ExtsRV64Y.at("i") == (RISCVISAUtils::ExtensionVersion{2, 1}));
+  EXPECT_TRUE(ExtsRV64Y.at("y") == (RISCVISAUtils::ExtensionVersion{0, 99}));
+  EXPECT_EQ(InfoRV64Y.getXLen(), 64U);
 }
 
 TEST(ParseArchString, RejectsUnsupportedBaseISA) {
   for (StringRef Input : {"rv128i", "rv128g"}) {
-    EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
-              "string must begin with rv32{i,e,g}, rv64{i,e,g}, or a supported "
-              "profile name");
+    EXPECT_EQ(
+        toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
+        "string must begin with rv32{i,e,g,y}, rv64{i,e,g,y}, or a supported "
+        "profile name");
   }
 }
 
@@ -381,6 +460,9 @@ TEST(ParseArchString, RejectsUnrecognizedExtensionVersionsByDefault) {
   EXPECT_EQ(toString(RISCVISAInfo::parseArchString("rv32izifencei10p10", true)
                          .takeError()),
             "unsupported version number 10.10 for extension 'zifencei'");
+  EXPECT_EQ(
+      toString(RISCVISAInfo::parseArchString("rv64y0p97", true).takeError()),
+      "unsupported version number 0.97 for extension 'y'");
 }
 
 TEST(ParseArchString, AcceptsUnderscoreSplittingExtensions) {
@@ -474,7 +556,7 @@ TEST(ParseArchString, AcceptsAmbiguousFromRelaxExtensions) {
 TEST(ParseArchString, RejectsRelaxExtensionsNotStartWithEorIorG) {
   EXPECT_EQ(
       toString(RISCVISAInfo::parseArchString("rv32zba_im", true).takeError()),
-      "first letter after 'rv32' should be 'e', 'i' or 'g'");
+      "first letter after 'rv32' should be 'e', 'i', 'g' or 'y'");
 }
 
 TEST(ParseArchString,
@@ -661,6 +743,15 @@ TEST(ParseArchString, RejectsConflictingExtensions) {
     EXPECT_THAT(
         toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
         ::testing::EndsWith(" is only supported for 'rv32'"));
+
+  EXPECT_EQ(
+      toString(
+          RISCVISAInfo::parseArchString("rv32y0p99_zcf", true).takeError()),
+      "'zcf' is incompatible with rv32y base");
+  EXPECT_EQ(
+      toString(
+          RISCVISAInfo::parseArchString("rv64y0p99_zcd", true).takeError()),
+      "'zcd' is incompatible with rv64y base");
   }
 }
 
@@ -691,9 +782,10 @@ TEST(ParseArchString, MissingDepency) {
 
 TEST(ParseArchString, RejectsUnrecognizedProfileNames) {
   for (StringRef Input : {"rvi23u99", "rvz23u64", "rva99u32"}) {
-    EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
-              "string must begin with rv32{i,e,g}, rv64{i,e,g}, or a supported "
-              "profile name");
+    EXPECT_EQ(
+        toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
+        "string must begin with rv32{i,e,g,y}, rv64{i,e,g,y}, or a supported "
+        "profile name");
   }
 }
 
@@ -902,6 +994,36 @@ TEST(ParseArchString, ZceImplication) {
   EXPECT_EQ(ExtsRV64IDZce.count("zce"), 1U);
   EXPECT_EQ(ExtsRV64IDZce.count("zcmp"), 1U);
   EXPECT_EQ(ExtsRV64IDZce.count("zcmt"), 1U);
+
+  // RV32Y Zce: zcf incompatible, but zcmp/zcmt compatible.
+  auto MaybeRV32YZce = RISCVISAInfo::parseArchString("rv32y0p99_zce", true);
+  ASSERT_THAT_EXPECTED(MaybeRV32YZce, Succeeded());
+  const auto &ExtsRV32YZce = (*MaybeRV32YZce)->getExtensions();
+  EXPECT_EQ(ExtsRV32YZce.size(), 8UL);
+  EXPECT_EQ(ExtsRV32YZce.count("i"), 1U);
+  EXPECT_EQ(ExtsRV32YZce.count("y"), 1U);
+  EXPECT_EQ(ExtsRV32YZce.count("zicsr"), 1U);
+  EXPECT_EQ(ExtsRV32YZce.count("zca"), 1U);
+  EXPECT_EQ(ExtsRV32YZce.count("zcb"), 1U);
+  EXPECT_EQ(ExtsRV32YZce.count("zce"), 1U);
+  EXPECT_EQ(ExtsRV32YZce.count("zcmp"), 1U);
+  EXPECT_EQ(ExtsRV32YZce.count("zcmt"), 1U);
+
+  // RV32Y Zce with F: zcf incompatible, so zcf is not implied.
+  auto MaybeRV32YFZce = RISCVISAInfo::parseArchString("rv32y0p99_f_zce", true);
+  ASSERT_THAT_EXPECTED(MaybeRV32YFZce, Succeeded());
+  const auto &ExtsRV32YFZce = (*MaybeRV32YFZce)->getExtensions();
+  EXPECT_EQ(ExtsRV32YFZce.size(), 9UL);
+  EXPECT_EQ(ExtsRV32YFZce.count("i"), 1U);
+  EXPECT_EQ(ExtsRV32YFZce.count("y"), 1U);
+  EXPECT_EQ(ExtsRV32YFZce.count("zicsr"), 1U);
+  EXPECT_EQ(ExtsRV32YFZce.count("f"), 1U);
+  EXPECT_EQ(ExtsRV32YFZce.count("zca"), 1U);
+  EXPECT_EQ(ExtsRV32YFZce.count("zcb"), 1U);
+  EXPECT_EQ(ExtsRV32YFZce.count("zce"), 1U);
+  EXPECT_EQ(ExtsRV32YFZce.count("zcf"), 0U);
+  EXPECT_EQ(ExtsRV32YFZce.count("zcmp"), 1U);
+  EXPECT_EQ(ExtsRV32YFZce.count("zcmt"), 1U);
 }
 
 TEST(isSupportedExtensionWithVersion, AcceptsSingleExtensionWithVersion) {
