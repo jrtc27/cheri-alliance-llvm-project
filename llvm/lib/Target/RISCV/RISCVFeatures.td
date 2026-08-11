@@ -1022,6 +1022,21 @@ def FeatureStdExtY : RISCVExtension<0, 99, "'Base Y' (CHERI)">;
 def HasStdExtY : Predicate<"Subtarget->hasStdExtY()">,
                  AssemblerPredicate<(all_of FeatureStdExtY), "'Base Y' (CHERI)">;
 
+def FeatureStdExtZyhybrid
+    : RISCVExtension<0, 99, "CHERI Pointer Modes", [FeatureStdExtY]>;
+def HasStdExtZyhybrid :
+      Predicate<"Subtarget->hasStdExtZyhybrid()">,
+      AssemblerPredicate<(all_of FeatureStdExtZyhybrid),
+                         "'Zyhybrid' (CHERI Pointer Modes)">;
+
+def FeatureStdExtZylevels1b
+    : RISCVExtension<0, 99, "CHERI 2-Level Information Flow Control",
+                     [FeatureStdExtY]>;
+def HasStdExtZylevels1b :
+      Predicate<"Subtarget->hasStdExtZylevels1b()">,
+      AssemblerPredicate<(all_of FeatureStdExtZylevels1b),
+                         "'Zylevels1b' (CHERI 2-Level Information Flow Control)">;
+
 //===----------------------------------------------------------------------===//
 // Vendor extensions
 //===----------------------------------------------------------------------===//
@@ -1388,6 +1403,15 @@ def HasZCheriPurecapOrCheri
                 AssemblerPredicate<(any_of FeatureStdExtXCheri, FeatureStdExtZCheriPureCap),
                 "'Zcheripurecap' (CHERI aware Instructions) or "
                 "Implements CHERI extension">;
+
+def HasYOrZCheriPurecapOrCheri
+    : Predicate<"Subtarget->hasStdExtY() || Subtarget->hasCheri() || "
+                "Subtarget->hasStdExtZCheriPureCap()">,
+      AssemblerPredicate<(any_of FeatureStdExtY, FeatureStdExtXCheri,
+                                 FeatureStdExtZCheriPureCap),
+                         "'Base Y' (CHERI) or "
+                         "'Zcheripurecap' (CHERI aware Instructions) or "
+                         "Implements CHERI extension">;
 
 def NotHasZCheriPurecap
     : Predicate<"!Subtarget->hasStdExtZCheriPureCap()">,

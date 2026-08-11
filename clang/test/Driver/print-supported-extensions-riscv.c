@@ -116,6 +116,8 @@
 // CHECK-NEXT:     zvl8192b             1.0       'Zvl8192b' (Minimum Vector Length 8192)
 // CHECK-NEXT:     zhinx                1.0       'Zhinx' (Half Float in Integer)
 // CHECK-NEXT:     zhinxmin             1.0       'Zhinxmin' (Half Float in Integer Minimal)
+// CHECK-NEXT:     zyhybrid             0.99      'Zyhybrid' (CHERI Pointer Modes)
+// CHECK-NEXT:     zylevels1b           0.99      'Zylevels1b' (CHERI 2-Level Information Flow Control)
 // CHECK-NEXT:     sha                  1.0       'Sha' (Augmented Hypervisor)
 // CHECK-NEXT:     shcounterenw         1.0       'Shcounterenw' (Support writeable hcounteren enable bit for any hpmcounter that is not read-only zero)
 // CHECK-NEXT:     shgatpa              1.0       'Shgatpa' (SvNNx4 mode supported for all modes supported by satp, as well as Bare)
