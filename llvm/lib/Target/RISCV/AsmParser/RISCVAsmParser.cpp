@@ -126,6 +126,7 @@ class RISCVAsmParser : public MCTargetAsmParser {
 
   bool isCheri() const override {
     return getSTI().getFeatureBits()[RISCV::FeatureStdExtXCheri] ||
+           getSTI().getFeatureBits()[RISCV::FeatureStdExtY] ||
            getSTI().getFeatureBits()[RISCV::FeatureStdExtZCheriPureCap];
   }
 
@@ -3586,9 +3587,11 @@ bool RISCVAsmParser::parseDirectiveOption() {
       return true;
 
     if (!(getSTI().hasFeature(RISCV::FeatureStdExtXCheri) ||
+          getSTI().hasFeature(RISCV::FeatureStdExtY) ||
           getSTI().hasFeature(RISCV::FeatureStdExtZCheriPureCap)))
       return Error(Parser.getTok().getLoc(),
-                   "option requires 'xcheri' or 'zcheripurecap' extension");
+                   "option requires 'xcheri' or 'zcheripurecap' extension, "
+                   "or 'y' base ISA");
 
     getTargetStreamer().emitDirectiveOptionCapMode();
     setFeatureBits(RISCV::FeatureCapMode, "cap-mode");
@@ -3600,9 +3603,11 @@ bool RISCVAsmParser::parseDirectiveOption() {
       return true;
 
     if (!(getSTI().hasFeature(RISCV::FeatureStdExtXCheri) ||
+          getSTI().hasFeature(RISCV::FeatureStdExtY) ||
           getSTI().hasFeature(RISCV::FeatureStdExtZCheriPureCap)))
       return Error(Parser.getTok().getLoc(),
-                   "option requires 'xcheri' or 'zcheripurecap' extension");
+                   "option requires 'xcheri' or 'zcheripurecap' extension, "
+                   "or 'y' base ISA");
 
     getTargetStreamer().emitDirectiveOptionNoCapMode();
     clearFeatureBits(RISCV::FeatureCapMode, "cap-mode");

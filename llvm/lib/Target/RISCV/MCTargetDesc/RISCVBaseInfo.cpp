@@ -152,7 +152,9 @@ void validate(const Triple &TT, const FeatureBitset &FeatureBits) {
       FeatureBits[RISCV::Feature64Bit])
     report_fatal_error("RV32 and RV64 can't be combined");
   // TODO: Support capability variant of R_RISCV_ADD
-  if (FeatureBits[RISCV::FeatureStdExtXCheri] && FeatureBits[RISCV::FeatureRelax])
+  if ((FeatureBits[RISCV::FeatureStdExtXCheri] ||
+       FeatureBits[RISCV::FeatureStdExtY]) &&
+      FeatureBits[RISCV::FeatureRelax])
     report_fatal_error("CHERI does not currently support linker relaxation");
 }
 
