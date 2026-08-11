@@ -25,7 +25,6 @@
 ; CHECK:   experimental-xqcicsr             - 'Xqcicsr' (Qualcomm uC CSR Extension).
 ; CHECK:   experimental-xqcilsm             - 'Xqcilsm' (Qualcomm uC Load Store Multiple Extension).
 ; CHECK:   experimental-xqcisls             - 'Xqcisls' (Qualcomm uC Scaled Load Store Extension).
-; CHECK:   experimental-y                   - 'Y' ('Base Y' (CHERI)).
 ; CHECK:   experimental-zalasr              - 'Zalasr' (Load-Acquire and Store-Release Instructions).
 ; CHECK:   experimental-zicfilp             - 'Zicfilp' (Landing pad).
 ; CHECK:   experimental-zicfiss             - 'Zicfiss' (Shadow stack).
@@ -174,6 +173,7 @@
 ; CHECK:   xtheadvdot                       - 'XTHeadVdot' (T-Head Vector Extensions for Dot).
 ; CHECK:   xventanacondops                  - 'XVentanaCondOps' (Ventana Conditional Ops).
 ; CHECK:   xwchc                            - 'Xwchc' (WCH/QingKe additional compressed opcodes).
+; CHECK:   y                                - 'Y' ('Base Y' (CHERI)).
 ; CHECK:   za128rs                          - 'Za128rs' (Reservation Set Size of at Most 128 Bytes).
 ; CHECK:   za64rs                           - 'Za64rs' (Reservation Set Size of at Most 64 Bytes).
 ; CHECK:   zaamo                            - 'Zaamo' (Atomic Memory Operations).

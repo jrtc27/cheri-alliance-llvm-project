@@ -14,6 +14,7 @@
 // CHECK-NEXT:     b                    1.0       'B' (the collection of the Zba, Zbb, Zbs extensions)
 // CHECK-NEXT:     v                    1.0       'V' (Vector Extension for Application Processors)
 // CHECK-NEXT:     h                    1.0       'H' (Hypervisor)
+// CHECK-NEXT:     y                    0.99      'Y' ('Base Y' (CHERI))
 // CHECK-NEXT:     zic64b               1.0       'Zic64b' (Cache Block Size Is 64 Bytes)
 // CHECK-NEXT:     zicbom               1.0       'Zicbom' (Cache-Block Management Instructions)
 // CHECK-NEXT:     zicbop               1.0       'Zicbop' (Cache-Block Prefetch Instructions)
@@ -188,7 +189,6 @@
 // CHECK-NEXT:     xwchc                2.2       'Xwchc' (WCH/QingKe additional compressed opcodes)
 // CHECK-EMPTY:
 // CHECK-NEXT: Experimental extensions
-// CHECK-NEXT:     y                    0.96      'Y' ('Base Y' (CHERI))
 // CHECK-NEXT:     zicfilp              1.0       'Zicfilp' (Landing pad)
 // CHECK-NEXT:     zicfiss              1.0       'Zicfiss' (Shadow stack)
 // CHECK-NEXT:     zalasr               0.1       'Zalasr' (Load-Acquire and Store-Release Instructions)

@@ -940,6 +940,7 @@ R"(All available -march extensions for RISC-V
     b                    1.0
     v                    1.0
     h                    1.0
+    y                    0.99
     zic64b               1.0
     zicbom               1.0
     zicbop               1.0
@@ -1114,7 +1115,6 @@ R"(All available -march extensions for RISC-V
     xwchc                2.2
 
 Experimental extensions
-    y                    0.96
     zicfilp              1.0       This is a long dummy description
     zicfiss              1.0
     zalasr               0.1
