@@ -381,6 +381,11 @@ Expected<SubtargetFeatures> ELFObjectFileBase::getRISCVFeatures() const {
     Features.AddFeature("zca");
   }
 
+  if (PlatformFlags & ELF::EF_RISCV_RVY) {
+    Features.AddFeature("y");
+    Features.AddFeature("cap-mode");
+  }
+
   if (PlatformFlags & ELF::EF_RISCV_CAP_MODE) {
     Features.AddFeature("xcheri");
     Features.AddFeature("cap-mode");
