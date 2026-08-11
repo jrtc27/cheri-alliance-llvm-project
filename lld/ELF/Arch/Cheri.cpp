@@ -102,6 +102,66 @@ bool isCheriAbi(Ctx &ctx, const InputFile &f) {
   }
 }
 
+template <typename ELFT>
+static void getMipsCheriAbiVariant(std::optional<unsigned> &abi,
+                                   SyntheticSection &sec) {
+  abi = static_cast<MipsAbiFlagsSection<ELFT> &>(sec).getCheriAbiVariant();
+}
+
+static bool isCheriMipsTrampolineAbi(Ctx &ctx) {
+  if (ctx.arg.emachine != EM_MIPS)
+    return false;
+
+  if (!ctx.in.mipsAbiFlags)
+    return false;
+
+  std::optional<unsigned> abi;
+  invokeELFT(getMipsCheriAbiVariant, abi, *ctx.in.mipsAbiFlags);
+  if (!abi)
+    return false;
+
+  if (*abi != DF_MIPS_CHERI_ABI_PLT && *abi != DF_MIPS_CHERI_ABI_FNDESC)
+    return false;
+
+  return true;
+}
+
+static bool needsCheriMipsTrampoline(Ctx &ctx, RelType type,
+                                     const Symbol &sym) {
+  // In the PLT ABI (and fndesc?) we have to use an elf relocation for function
+  // pointers to ensure that the runtime linker adds the required trampolines
+  // that sets $cgp:
+
+  if (!isCheriMipsTrampolineAbi(ctx))
+    return false;
+
+  if (!sym.isFunc() || type == *ctx.target->symbolicCapCallRel)
+    return false;
+
+  // In static binaries we do not need PLT stubs for function pointers since
+  // all functions share the same $cgp
+  // TODO: this is no longer true if we were to support dlopen() in static
+  // binaries
+  if (!hasDynamicLinker(ctx))
+    return false;
+
+  return true;
+}
+
+static Symbol &getCheriMipsTrampolineSym(Ctx &ctx, RelType type, Symbol &sym) {
+  assert(needsCheriMipsTrampoline(ctx, type, sym));
+
+  if (sym.includeInDynsym(ctx))
+    return sym;
+
+  Defined &newSym = *ctx.symtab->ensureSymbolWillBeInDynsym(&sym);
+  assert(newSym.isFunc() && "This should only be used for functions");
+  assert(newSym.includeInDynsym(ctx));
+  assert(newSym.binding == llvm::ELF::STB_GLOBAL);
+  assert(newSym.visibility() == llvm::ELF::STV_HIDDEN);
+  return newSym;
+}
+
 // See CheriBSD crt_init_globals()
 template <class ELFT> struct InMemoryCapRelocEntry {
   static constexpr size_t fieldSize = ELFT::Is64Bits ? 8 : 4;
@@ -252,15 +312,30 @@ std::string CheriCapRelocLocation::toString(Ctx &ctx) const {
  return SymbolAndOffset(section, offset).verboseToString(ctx);
 }
 
-void CheriCapRelocsSection::addCapReloc(bool isCode, CheriCapRelocLocation loc,
-                                        const SymbolAndOffset &target,
-                                        int64_t capabilityOffset,
-                                        Symbol *sourceSymbol) {
-  assert(!isa<Symbol *>(target.symOrSec) || !target.sym()->isPreemptible);
+void CheriCapRelocsSection::addReloc(
+    InputSectionBase &isec, uint64_t offsetInSec,
+    llvm::PointerUnion<Symbol *, InputSectionBase *> symOrSec, int64_t addend,
+    RelExpr expr, RelType type) {
+  Symbol *sym = dyn_cast<Symbol *>(symOrSec);
+  CheriCapRelocLocation loc{&isec, offsetInSec};
+  SymbolAndOffset target{symOrSec, 0};
 
-  auto sourceMsg = [&]() -> std::string {
-    return sourceSymbol ? verboseToString(ctx, sourceSymbol) : loc.toString(ctx);
-  };
+  assert(expr == R_ABS_CAP);
+  assert(!sym || !sym->isPreemptible);
+
+  if (sym && needsCheriMipsTrampoline(ctx, type, *sym)) {
+    if (ctx.arg.verboseCapRelocs)
+      message("Forcing symbolic relocation for non-preemptible "
+              "trampoline-using function pointer against " +
+              verboseToString(ctx, sym));
+
+    sym = &getCheriMipsTrampolineSym(ctx, type, *sym);
+    getPartition(ctx).relaDyn->addSymbolReloc(type, isec, offsetInSec, *sym,
+                                              addend, type);
+    return;
+  }
+
+  auto sourceMsg = [&]() { return loc.toString(ctx); };
   if (isa<Symbol *>(target.symOrSec) && target.sym()->isUndefined() &&
       !target.sym()->isUndefWeak()) {
     std::string msg =
@@ -272,19 +347,14 @@ void CheriCapRelocsSection::addCapReloc(bool isCode, CheriCapRelocLocation loc,
       nonFatalWarning(msg);
   }
 
-  // assert(CapabilityOffset >= 0 && "Negative offsets not supported");
-  if (errorHandler().verbose && capabilityOffset < 0)
-    message("global capability offset " + Twine(capabilityOffset) +
+  // assert(addend >= 0 && "Negative offsets not supported");
+  if (errorHandler().verbose && addend < 0)
+    message("global capability offset " + Twine(addend) +
             " is less than 0:\n>>> Location: " + loc.toString(ctx) +
             "\n>>> Target: " + target.verboseToString(ctx));
 
-  bool canWriteLoc = (loc.section->flags & SHF_WRITE) || !ctx.arg.zText;
-  if (!canWriteLoc) {
-    readOnlyCapRelocsError(ctx, *target.sym(), "\n>>> referenced by " + sourceMsg());
-    return;
-  }
-
-  addEntry(ctx, loc, {isCode, target, capabilityOffset});
+  bool isCode = type == ctx.target->symbolicCodeCapRel;
+  addEntry(loc, {isCode, target, addend});
 }
 
 static uint64_t getTargetSize(Ctx &ctx, const CheriCapRelocLocation &location,
@@ -372,7 +442,12 @@ static uint64_t getTargetSize(Ctx &ctx, const CheriCapRelocLocation &location,
       // For negative offsets use 0 instead (we want the range of the full symbol in that case)
       int64_t offset = std::max((int64_t)0, target.offset);
       uint64_t targetVA = targetSym->getVA(ctx, offset);
-      assert(targetVA >= os->addr);
+      uint64_t osVA = os->addr;
+      // TLS symbol addresses are relative to the TLS segment. See getSymVA.
+      // Note that Out::tlsPhdr->firstSec must be valid since getVA succeeded.
+      if (def->isTls() && !ctx.arg.relocatable)
+        osVA -= ctx.tlsPhdr->firstSec->addr;
+      assert(targetVA >= osVA);
       uint64_t offsetInOS = targetVA - os->addr;
       // Check this isn't a symbol defined outside a section in a linker script.
       // Use less-or-equal here to account for __end_foo symbols which point 1 past the section
@@ -397,17 +472,93 @@ static uint64_t getTargetSize(Ctx &ctx, const CheriCapRelocLocation &location,
   return targetSize;
 }
 
+enum class CapRelocType {
+  DATA,
+  RODATA,
+  FUNC,
+  IFUNC,
+  CODE,
+  FUNC_UNSEALED,
+};
+
+bool isCapRelocTypeExec(CapRelocType type) {
+  switch (type) {
+  case CapRelocType::DATA:
+  case CapRelocType::RODATA:
+    return false;
+  case CapRelocType::FUNC:
+  case CapRelocType::IFUNC:
+  case CapRelocType::CODE:
+  case CapRelocType::FUNC_UNSEALED:
+    return true;
+  }
+  llvm_unreachable("unknown CapRelocType");
+}
+
+static CapRelocType getTargetType(Ctx &ctx, const SymbolAndOffset &target) {
+  bool isFunc, isGnuIFunc, isTls, dontSeal;
+  OutputSection *os;
+  if (Symbol *s = dyn_cast<Symbol *>(target.symOrSec)) {
+    isFunc = s->isFunc();
+    isGnuIFunc = s->isGnuIFunc();
+    dontSeal = isFunc && s->isFuncDontSeal();
+    isTls = s->isTls();
+    os = s->getOutputSection();
+  } else {
+    InputSectionBase *isec = cast<InputSectionBase *>(target.symOrSec);
+    isFunc = (isec->flags & SHF_EXECINSTR) != 0;
+    isGnuIFunc = false;
+    dontSeal = false;
+    isTls = isec->type == STT_TLS;
+    os = isec->getOutputSection();
+  }
+  if (dontSeal)
+    return CapRelocType::FUNC_UNSEALED;
+  if (isFunc)
+    return CapRelocType::FUNC;
+  if (isGnuIFunc)
+    return CapRelocType::IFUNC;
+  if (os) {
+    if ((os->flags & SHF_WRITE) == 0 || (!isTls && isRelroSection(ctx, os)))
+      return CapRelocType::RODATA;
+    if (os->flags & SHF_EXECINSTR)
+      warn("Non-function __cap_reloc against symbol in section with "
+           "SHF_EXECINSTR (" +
+           os->name + ") for symbol " + target.verboseToString(ctx));
+  }
+  return CapRelocType::DATA;
+}
+
 template <class ELFT> struct CapRelocPermission {
+  static uint64_t encodeType(CapRelocType type) {
+    switch (type) {
+    case CapRelocType::DATA:
+      return 0;
+    case CapRelocType::RODATA:
+      return readOnlyFlag;
+    case CapRelocType::FUNC:
+      return functionFlag;
+    case CapRelocType::IFUNC:
+      return functionFlag | indirectFlag;
+    case CapRelocType::CODE:
+      return functionFlag | codeFlag;
+    case CapRelocType::FUNC_UNSEALED:
+      return functionFlag | dontSealFlag;
+    }
+    llvm_unreachable("unknown CapRelocType");
+  }
+
+private:
   static constexpr uint64_t permissionBit(uint64_t bit) {
     return UINT64_C(1) << ((sizeof(typename ELFT::uint) * 8) - bit);
   }
 
   // clang-format off
-  static const uint64_t function = permissionBit(1);
-  static const uint64_t readOnly = permissionBit(2);
-  static const uint64_t indirect = permissionBit(3);
-  static const uint64_t code     = permissionBit(4);
-  static const uint64_t dontSeal = permissionBit(5);
+  static const uint64_t functionFlag = permissionBit(1);
+  static const uint64_t readOnlyFlag = permissionBit(2);
+  static const uint64_t indirectFlag = permissionBit(3);
+  static const uint64_t codeFlag     = permissionBit(4);
+  static const uint64_t dontSealFlag = permissionBit(5);
   // clang-format on
 };
 
@@ -440,50 +591,32 @@ void CheriCapRelocsSection::writeToImpl(uint8_t *buf) {
 
     // The target VA is the base address of the capability, so symbol + 0
     uint64_t targetVA;
-    bool isFunc, isGnuIFunc, isTls, isCode = reloc.isCode, dontSeal;
-    OutputSection *os;
-    if (Symbol *s = dyn_cast<Symbol *>(realTarget.symOrSec)) {
-      targetVA = realTarget.sym()->getVA(ctx, 0);
-      isFunc = s->isFunc();
-      isGnuIFunc = s->isGnuIFunc();
-      dontSeal = isFunc && s->isFuncDontSeal();
-      isTls = s->isTls();
-      os = s->getOutputSection();
-    } else {
+    bool isCode = reloc.isCode;
+    if (Symbol *s = dyn_cast<Symbol *>(realTarget.symOrSec))
+      targetVA = s->getVA(ctx, 0);
+    else {
       InputSectionBase *isec = cast<InputSectionBase *>(realTarget.symOrSec);
       targetVA = isec->getVA(0);
-      isFunc = (isec->flags & SHF_EXECINSTR) != 0;
-      isGnuIFunc = false;
-      dontSeal = false;
-      isTls = isec->type == STT_TLS;
-      os = isec->getOutputSection();
     }
-    if (isCode && !isFunc)
-      ELFSyncStream(ctx, ctx.arg.noinhibitExec ? DiagLevel::Warn : DiagLevel::Err)
-        << "code relocation against non-function symbol " << realTarget.verboseToString(ctx) 
-        << "\n>>> referenced by " << location.toString(ctx);
     uint64_t targetSize = getTargetSize(ctx, location, realTarget);
     uint64_t targetOffset = reloc.capabilityOffset + realTarget.offset;
-    uint64_t permissions = 0;
-    // Fow now Function implies ReadOnly so don't add the flag
-    if (isFunc || isGnuIFunc) {
-      permissions |= CapRelocPermission<ELFT>::function;
-      if (isGnuIFunc)
-        permissions |= CapRelocPermission<ELFT>::indirect;
-      if (isCode)
-        permissions |= CapRelocPermission<ELFT>::code;
-      if (dontSeal)
-        permissions |= CapRelocPermission<ELFT>::dontSeal;
-    } else if (os) {
-      assert(!isTls);
-      // if ((OS->getPhdrFlags() & PF_W) == 0) {
-      if (((os->flags & SHF_WRITE) == 0) || isRelroSection(ctx, os)) {
-        permissions |= CapRelocPermission<ELFT>::readOnly;
-      } else if (os->flags & SHF_EXECINSTR) {
-        warn("Non-function __cap_reloc against symbol in section with "
-             "SHF_EXECINSTR (" + os->name + ") for symbol " +
-             realTarget.verboseToString(ctx));
-      }
+    CapRelocType targetType = getTargetType(ctx, realTarget);
+    if (isCode) {
+      if (targetType != CapRelocType::FUNC)
+        ELFSyncStream(ctx,
+                      ctx.arg.noinhibitExec ? DiagLevel::Warn : DiagLevel::Err)
+            << "code relocation against non-function symbol "
+            << realTarget.verboseToString(ctx) << "\n>>> referenced by "
+            << location.toString(ctx);
+      targetType = CapRelocType::CODE;
+    }
+    uint64_t permissions = CapRelocPermission<ELFT>::encodeType(targetType);
+
+    // Use PCC bounds from the PT_CHERI_PCC segment.
+    if (PhdrEntry *ph = ctx.cheriBounds; ph && isCapRelocTypeExec(targetType)) {
+      targetOffset += targetVA - ph->p_vaddr;
+      targetVA = ph->p_vaddr;
+      targetSize = ph->p_memsz;
     }
 
     // TODO: should we warn about symbols that are out-of-bounds?
@@ -493,13 +626,6 @@ void CheriCapRelocsSection::writeToImpl(uint8_t *buf) {
     InMemoryCapRelocEntry<ELFT> entry(locationVA, targetVA, targetOffset,
                                       targetSize, permissions);
     memcpy(buf + offset, &entry, sizeof(entry));
-    //     if (errorHandler().verbose) {
-    //       errs() << "Added capability reloc: loc=" << utohexstr(LocationVA)
-    //              << ", object=" << utohexstr(TargetVA)
-    //              << ", offset=" << utohexstr(TargetOffset)
-    //              << ", size=" << utohexstr(TargetSize)
-    //              << ", permissions=" << utohexstr(Permissions) << "\n";
-    //     }
     offset += InMemoryCapRelocEntry<ELFT>::relocSize;
   }
 
@@ -785,11 +911,11 @@ uint64_t MipsCheriCapTableSection::assignIndices(uint64_t startIndex,
         it.second.usedInCallExpr ? *ctx.in.relaPlt : *ctx.mainPart->relaDyn;
     if (targetSym->isPreemptible)
       dynRelSec.addSymbolReloc(elfCapabilityReloc, *this, off, *targetSym);
-    else if (targetSym->isUndefWeak())
+    else if (isAbsolute(*targetSym))
       addConstant({R_ABS_CAP, elfCapabilityReloc, off, 0, targetSym});
     else
-      addRelativeCapabilityRelocation(ctx, *this, off, targetSym, 0, R_ABS_CAP,
-                                      elfCapabilityReloc);
+      ctx.mainPart->capRelocs->addReloc(*this, off, *targetSym, 0, R_ABS_CAP,
+                                        elfCapabilityReloc);
   }
   assert(assignedSmallIndexes + assignedLargeIndexes == entries.size());
   return assignedSmallIndexes + assignedLargeIndexes;
@@ -914,8 +1040,8 @@ void MipsCheriCapTableMappingSection::writeTo(uint8_t *buf) {
 
   // Write the mapping from function vaddr -> captable subset for RTLD
   std::vector<CaptableMappingEntry> entries;
-  // Note: Symtab->getSymbols() only returns the symbols in .dynsym. We need
-  // to use In.sym()tab instead since we also want to add all local functions!
+  // Note: symTab->getSymbols() only returns the symbols in .dynsym. We need
+  // to use in.symTab instead since we also want to add all local functions!
   for (const SymbolTableEntry &ste : ctx.in.symTab->getSymbols()) {
     Symbol* sym = ste.sym;
     if (!sym->isDefined() || !sym->isFunc())
@@ -968,104 +1094,17 @@ void MipsCheriCapTableMappingSection::writeTo(uint8_t *buf) {
   memcpy(buf, entries.data(), entries.size() * sizeof(CaptableMappingEntry));
 }
 
-static void writeCatableRelocationFragments(Ctx &ctx, InputSectionBase *sec, 
-                                            Symbol *sym, uint64_t offset) {
-  sec->addReloc({RE_CHERI_CAPFRAG_ADDR, ctx.target->symbolicRel, offset, 0, sym});
-  sec->addReloc({RE_CHERI_CAPFRAG_META, ctx.target->symbolicRel,
-                 offset + ctx.arg.wordsize, 0, sym});
-}
-
-template <typename ELFT>
-static void getMipsCheriAbiVariant(std::optional<unsigned> &abi,
-                                   SyntheticSection &sec) {
-  abi = static_cast<MipsAbiFlagsSection<ELFT> &>(sec).getCheriAbiVariant();
-}
-
-static bool needsCheriMipsTrampoline(Ctx &ctx, RelType type, const Symbol &sym) {
-  // In the PLT ABI (and fndesc?) we have to use an elf relocation for function
-  // pointers to ensure that the runtime linker adds the required trampolines
-  // that sets $cgp:
-
-  if (ctx.arg.emachine != EM_MIPS)
-    return false;
-
-  if (!sym.isFunc() || type == *ctx.target->symbolicCapCallRel)
-    return false;
-
-  // In static binaries we do not need PLT stubs for function pointers since
-  // all functions share the same $cgp
-  // TODO: this is no longer true if we were to support dlopen() in static
-  // binaries
-  if (!hasDynamicLinker(ctx))
-    return false;
-
-  if (!ctx.in.mipsAbiFlags)
-    return false;
-
-  std::optional<unsigned> abi;
-  invokeELFT(getMipsCheriAbiVariant, abi, *ctx.in.mipsAbiFlags);
-  if (!abi)
-    return false;
-
-  if (*abi != DF_MIPS_CHERI_ABI_PLT && *abi != DF_MIPS_CHERI_ABI_FNDESC)
-    return false;
-
-  return true;
-}
-
-static Symbol &getCheriMipsTrampolineSym(Ctx &ctx, RelType type, Symbol &sym) {
-  assert(needsCheriMipsTrampoline(ctx, type, sym));
-
-  if (sym.includeInDynsym(ctx))
-    return sym;
-
-  Defined &newSym = *ctx.symtab->ensureSymbolWillBeInDynsym(&sym);
-  assert(newSym.isFunc() && "This should only be used for functions");
-  assert(newSym.includeInDynsym(ctx));
-  assert(newSym.binding == llvm::ELF::STB_GLOBAL);
-  assert(newSym.visibility() == llvm::ELF::STV_HIDDEN);
-  return newSym;
-}
-
-void addRelativeCapabilityRelocation(
-    Ctx &ctx, InputSectionBase &isec, uint64_t offsetInSec,
-    llvm::PointerUnion<Symbol *, InputSectionBase *> symOrSec, int64_t addend,
-    RelExpr expr, RelType type) {
-  Symbol *sym = dyn_cast<Symbol *>(symOrSec);
-  assert(expr == R_ABS_CAP);
-  if (sym && needsCheriMipsTrampoline(ctx, type, *sym)) {
-    if (ctx.arg.verboseCapRelocs)
-      message("Forcing symbolic relocation for non-preemptible "
-              "trampoline-using function pointer against " +
-              verboseToString(ctx, sym));
-
-    sym = &getCheriMipsTrampolineSym(ctx, type, *sym);
-    ctx.mainPart->relaDyn->addSymbolReloc(type, isec, offsetInSec, *sym, addend,
-                                      type);
-    return;
-  }
-  bool isCode = type == ctx.target->symbolicCodeCapRel;
-  assert(!sym || !sym->isPreemptible);
-  // assert(!ctx.arg.useRelativeElfCheriRelocs &&
-  //        "relative ELF capability relocations not currently implemented");
-
-  if (ctx.arg.useRelativeElfCheriRelocs) {
-    assert(!sym->isPreemptible && "Must not be a preemptible symbol");
-    if (ctx.arg.emachine != EM_RISCV)
-      error("Relative Relocs method not implemented yet!");
-    RelocationBaseSection &oSec =
-        sym->includeInDynsym(ctx) ? *ctx.mainPart->relaDyn : *ctx.in.relaDyn;
-    oSec.addReloc(DynamicReloc::AgainstSymbol, R_RISCV_CHERI_RELATIVE, isec,
-                  offsetInSec, *sym, addend, expr, ctx.target->symbolicRel);
-    writeCatableRelocationFragments(ctx, &isec, sym, offsetInSec);
-    return;
-  }
-  ctx.in.capRelocs->addCapReloc(isCode, {&isec, offsetInSec}, {symOrSec, 0u},
-                            addend);
+static uint64_t getExecCapMetaBits(Ctx &ctx, bool dontSeal) {
+  return invokeIs64Bit(getCapabilityTopBits, ctx.cheriBounds->p_vaddr,
+                       ctx.cheriBounds->p_memsz,
+                       dontSeal ? PK_DONT_SEAL : PK_FUNC);
 }
 
 uint64_t getCapMetaBits(Ctx &ctx, int64_t a, const Symbol &sym,
                         const InputSectionBase *isec, uint64_t offset) {
+  if ((sym.isFunc() || sym.isGnuIFunc()) && ctx.arg.isCheriAbi)
+    return getExecCapMetaBits(ctx, sym.isFuncDontSeal());
+
   const uint64_t baseAddr = sym.getVA(ctx, a);
   CheriCapRelocLocation loc{const_cast<InputSectionBase *>(isec),
                             offset - ctx.arg.wordsize};
@@ -1077,6 +1116,55 @@ uint64_t getCapMetaBits(Ctx &ctx, int64_t a, const Symbol &sym,
   uint64_t metaBits =
       invokeIs64Bit(getCapabilityTopBits, baseAddr, symSize, kind);
   return metaBits;
+}
+
+// CHERI-MIPS using the PLT and fndesc ABIs uses a different mechanism for
+// determining the bounds of PCC.
+bool needsCheriPccSegment(Ctx &ctx) { return !isCheriMipsTrampolineAbi(ctx); }
+
+// Determine the required alignment for a single PT_CHERI_PCC segment.  Apply
+// the alignment to the first OutputSection and adjust the length of the padding
+// section to align the end of the segment.  Returns true if the alignment of
+// the first OutputSection changed or the size of the padding section changed.
+static bool alignPCCBounds(Ctx &ctx, PhdrEntry *p,
+                           CheriPccPaddingSection &psec) {
+  OutputSection *first = p->firstSec;
+  OutputSection *last = p->lastSec;
+
+  if (!first)
+    return false;
+
+  assert(psec.getParent() == last && "padding section is not last");
+  assert(psec.isNeeded() && "padding section is not enabled");
+
+  // Ignore existing padding.
+  uint64_t size = last->getVA() - first->getVA();
+  uint64_t align = ctx.target->getCheriRequiredAlignment(size);
+  if (align == 0)
+    align = 1;
+  bool changed = false;
+  if (first->addralign < align) {
+    first->addralign = align;
+    if (first->ptLoad)
+      first->ptLoad->p_align =
+          std::max(first->ptLoad->p_align, first->addralign);
+    p->p_align = std::max(p->p_align, first->addralign);
+    changed = true;
+  }
+  uint64_t padSize = alignTo(size, align) - size;
+  if (psec.getSize() != padSize) {
+    psec.setSize(padSize);
+    changed = true;
+  }
+  return changed;
+}
+
+bool cheriCapabilityBoundsAlign(Ctx &ctx) {
+  // Align the PT_CHERI_PCC segment.
+  bool changed = false;
+  if (ctx.cheriBounds)
+    changed |= alignPCCBounds(ctx, ctx.cheriBounds, *ctx.in.pccPadding);
+  return changed;
 }
 
 } // namespace elf

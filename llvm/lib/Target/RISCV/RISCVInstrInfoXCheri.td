@@ -21,6 +21,10 @@ def SDT_RISCVCheriBoolBinary : SDTypeProfile<1, 2, [
   SDTCisInt<0>, SDTCisVT<1, CLenVT>, SDTCisVT<2, CLenVT>
 ]>;
 
+def SDT_RISCVLoadTGOT : SDTypeProfile<1, 2, [
+  SDTCisPtrTy<0>, SDTCisSameAs<0, 1>, SDTCisInt<2>
+]>;
+
 // Target-dependent nodes.
 def riscv_cap_call        : SDNode<"RISCVISD::CAP_CALL", SDT_RISCVCapCall,
                                    [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue,
@@ -42,6 +46,8 @@ def riscv_clgc            : SDNode<"RISCVISD::CLGC", SDT_RISCVSymLoad,
 def riscv_cla_tls_ie      : SDNode<"RISCVISD::CLA_TLS_IE", SDT_RISCVSymLoad,
                                    [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
 def riscv_clc_tls_gd      : SDNode<"RISCVISD::CLC_TLS_GD", SDT_RISCVSymLoad>;
+def riscv_load_tgot       : SDNode<"RISCVISD::LOAD_TGOT", SDT_RISCVLoadTGOT,
+                                   [SDNPHasChain, SDNPMayLoad, SDNPMemOperand]>;
 
 //===----------------------------------------------------------------------===//
 // Operand and SDNode transformation definitions.
@@ -521,6 +527,10 @@ def : InstAlias<"cincoffsetimm $cd, $cs1, $imm",
                 (CIncOffsetImm GPCR:$cd, GPCR:$cs1, simm12:$imm), 0>;
 def : InstAlias<"csetboundsimm $cd, $cs1, $imm",
                 (CSetBoundsImm GPCR:$cd, GPCR:$cs1, uimm12:$imm), 0>;
+def : InstAlias<"caddi $cd, $cs1, $imm",
+                (CIncOffsetImm GPCR:$cd, GPCR:$cs1, simm12:$imm), 0>;
+def : InstAlias<"cadd $cd, $cs1, $rs2",
+                (CIncOffset GPCR:$cd, GPCR:$cs1, GPR:$rs2), 0>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1453,6 +1463,8 @@ let hasSideEffects = 0, mayLoad = 0, mayStore = 0, isCodeGenOnly = 0,
 def PseudoCLLC : Pseudo<(outs GPCR:$dst), (ins bare_symbol:$src), [],
                         "llc", "$dst, $src">;
 def : InstAlias<"cllc $dst, $src", (PseudoCLLC GPCR:$dst, bare_symbol:$src), 0>;
+def : InstAlias<"lly $dst, $src",
+                (PseudoCLLC YGPR:$dst, bare_symbol:$src), 0>;
 
 def : Pat<(riscv_cllc tglobaladdr:$in), (PseudoCLLC tglobaladdr:$in)>;
 def : Pat<(riscv_cllc tblockaddress:$in), (PseudoCLLC tblockaddress:$in)>;
@@ -1464,6 +1476,8 @@ let hasSideEffects = 0, mayLoad = 1, mayStore = 0, isCodeGenOnly = 0,
 def PseudoCLGC : Pseudo<(outs GPCR:$dst), (ins bare_symbol:$src), [],
                         "lgc", "$dst, $src">;
 def : InstAlias<"clgc $dst, $src", (PseudoCLGC GPCR:$dst, bare_symbol:$src), 0>;
+def : InstAlias<"lgy $dst, $src",
+                (PseudoCLGC YGPR:$dst, bare_symbol:$src), 0>;
 
 def : Pat<(riscv_clgc tglobaladdr:$in), (PseudoCLGC tglobaladdr:$in)>;
 
@@ -1490,6 +1504,20 @@ def PseudoCIncOffsetTPRel : Pseudo<(outs GPCR:$rd),
                                    "cincoffset", "$rd, $rs1, $rs2, $src">;
 def : InstAlias<"cadd $rd, $rs1, $rs2, $src",
                 (PseudoCIncOffsetTPRel GPCR:$rd, GPCR:$rs1, GPRNoX0:$rs2, tprel_add_symbol:$src), 0>;
+}
+
+let Predicates = [HasCheri, IsCapMode, IsRV32] in {
+def : Pat<(riscv_load_tgot GPCR:$base, (XLenVT 0)),
+          (CLC_64 GPCR:$base, 0)>;
+def : Pat<(riscv_load_tgot GPCR:$base, tglobaltlsaddr:$lo),
+          (CLC_64 GPCR:$base, tglobaltlsaddr:$lo)>;
+}
+
+let Predicates = [HasCheri, IsCapMode, IsRV64] in {
+def : Pat<(riscv_load_tgot GPCR:$base, (XLenVT 0)),
+          (CLC_128 GPCR:$base, 0)>;
+def : Pat<(riscv_load_tgot GPCR:$base, tglobaltlsaddr:$lo),
+          (CLC_128 GPCR:$base, tglobaltlsaddr:$lo)>;
 }
 
 let Predicates = [HasZCheriPurecapOrCheri, HasStdExtD, IsRV32] in {
@@ -2194,6 +2222,9 @@ def PseudoCJump : Pseudo<(outs GPCR:$rd),
                          (ins pseudo_cap_jump_symbol:$target), []> {
   let AsmString = "jump\t$target, $rd";
 }
+let Predicates = [HasZCheriPurecapOrCheri, IsCapMode, IsPureCapABI] in
+def : InstAlias<"cjump $target, $rd",
+                (PseudoCJump GPCR:$rd, pseudo_cap_jump_symbol:$target), 0>;
 
 defm : CheriLdPat<sextloadi8, CLB>, Requires<[HasZCheriPurecapOrCheri, IsCapMode]>;
 defm : CheriLdPat<extloadi8, CLB>, Requires<[HasZCheriPurecapOrCheri, IsCapMode]>;

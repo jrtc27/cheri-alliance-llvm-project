@@ -11,13 +11,13 @@
 #include "Symbols.h"
 #include "SyntheticSections.h"
 #include "Target.h"
+#include "llvm/CHERI/cheri-compressed-cap/cheri_compressed_cap.h"
 #include "llvm/Support/ELFAttributes.h"
 #include "llvm/Support/LEB128.h"
 #include "llvm/Support/RISCVAttributeParser.h"
 #include "llvm/Support/RISCVAttributes.h"
 #include "llvm/Support/TimeProfiler.h"
 #include "llvm/TargetParser/RISCVISAInfo.h"
-#include "Cheri.h"
 
 using namespace llvm;
 using namespace llvm::object;
@@ -33,6 +33,7 @@ public:
   RISCV(Ctx &);
   uint32_t calcEFlags() const override;
   int getCapabilitySize() const override;
+  uint64_t getCheriRequiredAlignment(uint64_t len) const override;
   int64_t getImplicitAddend(const uint8_t *buf, RelType type) const override;
   void writeGotHeader(uint8_t *buf) const override;
   void writeGotPlt(uint8_t *buf, const Symbol &s) const override;
@@ -125,6 +126,8 @@ RISCV::RISCV(Ctx &ctx) : TargetInfo(ctx) {
   iRelativeRel = R_RISCV_IRELATIVE;
   symbolicCapRel = R_RISCV_CHERI_CAPABILITY;
   symbolicCodeCapRel = R_RISCV_CHERI_CAPABILITY_CODE;
+  tgotRel = R_RISCV_CHERI_TLS_TGOT_SLOT;
+  tgotGotRel = R_RISCV_CHERI_TLS_TGOTREL;
   if (ctx.arg.is64) {
     symbolicRel = R_RISCV_64;
     tlsModuleIndexRel = R_RISCV_TLS_DTPMOD64;
@@ -166,6 +169,20 @@ static uint32_t getEFlags(Ctx &ctx, InputFile *f) {
 
 int RISCV::getCapabilitySize() const {
   return ctx.arg.is64 ? 16 : 8;
+}
+
+uint64_t RISCV::getCheriRequiredAlignment(uint64_t len) const {
+  if (ctx.arg.zCheriRiscvV9) {
+    if (ctx.arg.is64)
+      return cc128_get_required_alignment(len);
+    else
+      return cc64_get_required_alignment(len);
+  } else {
+    if (ctx.arg.is64)
+      return cc128r_get_required_alignment(len);
+    else
+      return cc64r_get_required_alignment(len);
+  }
 }
 
 uint32_t RISCV::calcEFlags() const {
@@ -315,6 +332,12 @@ RelType RISCV::getDynRel(RelType type) const {
 
 RelExpr RISCV::getRelExpr(const RelType type, const Symbol &s,
                           const uint8_t *loc) const {
+  // TODO: Remove these
+  auto warnDeprecated = [&]() {
+    Warn(ctx) << getErrorLoc(ctx, loc) << "deprecated relocation (" << type
+              << ") against symbol '" << &s
+              << "'; recompile with this toolchain";
+  };
   switch (type) {
   case R_RISCV_NONE:
     return R_NONE;
@@ -338,18 +361,22 @@ RelExpr RISCV::getRelExpr(const RelType type, const Symbol &s,
   case R_RISCV_SUB32:
   case R_RISCV_SUB64:
     return RE_RISCV_ADD;
-  case R_RISCV_JAL:
   case R_RISCV_CHERI_CJAL:
+  case R_RISCV_CHERI_RVC_CJUMP:
+    warnDeprecated();
+    [[fallthrough]];
+  case R_RISCV_JAL:
   case R_RISCV_BRANCH:
   case R_RISCV_PCREL_HI20:
   case R_RISCV_RVC_BRANCH:
   case R_RISCV_RVC_JUMP:
-  case R_RISCV_CHERI_RVC_CJUMP:
   case R_RISCV_32_PCREL:
     return R_PC;
+  case R_RISCV_CHERI_CCALL:
+    warnDeprecated();
+    [[fallthrough]];
   case R_RISCV_CALL:
   case R_RISCV_CALL_PLT:
-  case R_RISCV_CHERI_CCALL:
   case R_RISCV_PLT32:
     return R_PLT_PC;
   case R_RISCV_GOT_HI20:
@@ -374,8 +401,11 @@ RelExpr RISCV::getRelExpr(const RelType type, const Symbol &s,
     return R_TPREL;
   case R_RISCV_ALIGN:
     return R_RELAX_HINT;
-  case R_RISCV_TPREL_ADD:
   case R_RISCV_CHERI_TPREL_CINCOFFSET:
+    warnDeprecated();
+    [[fallthrough]];
+  case R_RISCV_TPREL_ADD:
+  case R_RISCV_CHERI_TLS_TGOT_ADD:
   case R_RISCV_RELAX:
     return ctx.arg.relax ? R_RELAX_HINT : R_NONE;
   case R_RISCV_SET_ULEB128:
@@ -384,13 +414,22 @@ RelExpr RISCV::getRelExpr(const RelType type, const Symbol &s,
   case R_RISCV_CHERI_CAPABILITY:
   case R_RISCV_CHERI_CAPABILITY_CODE:
     return R_ABS_CAP;
-  // TODO: Deprecate and eventually remove these
   case R_RISCV_CHERI_CAPTAB_PCREL_HI20:
+    warnDeprecated();
     return R_GOT_PC;
   case R_RISCV_CHERI_TLS_IE_CAPTAB_PCREL_HI20:
+    warnDeprecated();
     return R_GOT_PC;
   case R_RISCV_CHERI_TLS_GD_CAPTAB_PCREL_HI20:
+    warnDeprecated();
     return R_TLSGD_PC;
+  case R_RISCV_CHERI_TLS_TGOT_HI20:
+  case R_RISCV_CHERI_TLS_TGOT_LO12_I:
+    return R_TGOT_TP;
+  case R_RISCV_CHERI_TLS_TGOT_GOT_HI20:
+    return R_TGOT_GOT_PC;
+  case R_RISCV_CHERI_TLS_TGOT_GD_HI20:
+    return R_TGOT_TLSGD_PC;
   default:
     Err(ctx) << getErrorLoc(ctx, loc) << "unknown relocation (" << type.v
              << ") against symbol " << &s;
@@ -490,6 +529,9 @@ void RISCV::relocate(uint8_t *loc, const Relocation &rel, uint64_t val) const {
   case R_RISCV_CHERI_CAPTAB_PCREL_HI20:
   case R_RISCV_CHERI_TLS_IE_CAPTAB_PCREL_HI20:
   case R_RISCV_CHERI_TLS_GD_CAPTAB_PCREL_HI20:
+  case R_RISCV_CHERI_TLS_TGOT_GOT_HI20:
+  case R_RISCV_CHERI_TLS_TGOT_GD_HI20:
+  case R_RISCV_CHERI_TLS_TGOT_HI20:
   case R_RISCV_GOT_HI20:
   case R_RISCV_PCREL_HI20:
   case R_RISCV_TLSDESC_HI20:
@@ -503,6 +545,7 @@ void RISCV::relocate(uint8_t *loc, const Relocation &rel, uint64_t val) const {
     return;
   }
 
+  case R_RISCV_CHERI_TLS_TGOT_LO12_I:
   case R_RISCV_PCREL_LO12_I:
   case R_RISCV_TLSDESC_LOAD_LO12:
   case R_RISCV_TLSDESC_ADD_LO12:
@@ -592,6 +635,13 @@ void RISCV::relocate(uint8_t *loc, const Relocation &rel, uint64_t val) const {
       write64le(loc, val);
     else
       write64le(loc, val - dtpOffset);
+    break;
+
+  case R_RISCV_CHERI_TLS_TGOTREL:
+    if (ctx.arg.is64)
+      write64le(loc, val);
+    else
+      write32le(loc, val);
     break;
 
   case R_RISCV_RELAX:

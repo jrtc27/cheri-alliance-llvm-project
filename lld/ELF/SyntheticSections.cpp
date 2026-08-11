@@ -733,6 +733,29 @@ bool GotSection::addDynTlsEntry(const Symbol &sym) {
   return true;
 }
 
+void GotSection::addTgotEntry(Symbol &sym) {
+  assert(sym.auxIdx == ctx.symAux.size() - 1);
+  ctx.symAux.back().tgotGotIdx = numEntries++;
+}
+
+void GotSection::addTgotTlsDescEntry(Symbol &sym) {
+  assert(sym.auxIdx == ctx.symAux.size() - 1);
+  ctx.symAux.back().tgotTlsDescIdx = numEntries;
+  numEntries += 2;
+}
+
+bool GotSection::addTgotDynTlsEntry(Symbol &sym) {
+  assert(sym.auxIdx == ctx.symAux.size() - 1);
+  ctx.symAux.back().tgotTlsGdIdx = numEntries;
+  // Global Dynamic TLS entries take two GOT slots, except on CHERI where they
+  // can be packed into one GOT slot.
+  if (ctx.arg.isCheriAbi)
+    ++numEntries;
+  else
+    numEntries += 2;
+  return true;
+}
+
 // Reserves TLS entries for a TLS module ID and a TLS block offset.
 // In total it takes two GOT slots.
 bool GotSection::addTlsIndex() {
@@ -757,6 +780,30 @@ uint64_t GotSection::getGlobalDynAddr(const Symbol &b) const {
 
 uint64_t GotSection::getGlobalDynOffset(const Symbol &b) const {
   return b.getTlsGdIdx(ctx) * ctx.target->gotEntrySize;
+}
+
+uint64_t GotSection::getTgotOffset(const Symbol &sym) const {
+  return sym.getTgotGotIdx(ctx) * ctx.target->gotEntrySize;
+}
+
+uint64_t GotSection::getTgotAddr(const Symbol &sym) const {
+  return getVA() + getTgotOffset(sym);
+}
+
+uint64_t GotSection::getTgotTlsDescOffset(const Symbol &sym) const {
+  return sym.getTgotTlsDescIdx(ctx) * ctx.target->gotEntrySize;
+}
+
+uint64_t GotSection::getTgotTlsDescAddr(const Symbol &sym) const {
+  return getVA() + getTgotTlsDescOffset(sym);
+}
+
+uint64_t GotSection::getTgotGlobalDynAddr(const Symbol &b) const {
+  return this->getVA() + b.getTgotTlsGdIdx(ctx) * ctx.target->gotEntrySize;
+}
+
+uint64_t GotSection::getTgotGlobalDynOffset(const Symbol &b) const {
+  return b.getTgotTlsGdIdx(ctx) * ctx.target->gotEntrySize;
 }
 
 void GotSection::finalizeContents() {
@@ -1312,6 +1359,24 @@ void IgotPltSection::writeTo(uint8_t *buf) {
   }
 }
 
+TgotSection::TgotSection(Ctx &ctx)
+    : SyntheticSection(ctx, ".tgot", SHT_PROGBITS, SHF_ALLOC,
+                       ctx.target->gotEntrySize) {}
+
+void TgotSection::addConstant(const Relocation &r) { relocations.push_back(r); }
+void TgotSection::addEntry(Symbol &sym) {
+  assert(sym.auxIdx == ctx.symAux.size() - 1);
+  ctx.symAux.back().tgotIdx = numEntries++;
+}
+
+size_t TgotSection::getSize() const {
+  return numEntries * ctx.target->gotEntrySize;
+}
+
+void TgotSection::writeTo(uint8_t *buf) {
+  ctx.target->relocateAlloc(*this, buf);
+}
+
 StringTableSection::StringTableSection(Ctx &ctx, StringRef name, bool dynamic)
     : SyntheticSection(ctx, name, SHT_STRTAB, dynamic ? (uint64_t)SHF_ALLOC : 0,
                        1),
@@ -1374,15 +1439,12 @@ DynamicSection<ELFT>::DynamicSection(Ctx &ctx)
 // - part.relaDyn
 // - ctx.in.relaPlt: this is included if a linker script places .rela.plt inside
 //   .rela.dyn
-// - in.relaDyn: this is included if R_CHERI_RELATIVE relocations are created.
 //
 // DT_RELASZ is the total size of the included sections.
 static uint64_t addRelaSz(Ctx &ctx, const RelocationBaseSection &relaDyn) {
   size_t size = relaDyn.getSize();
   if (ctx.in.relaPlt->getParent() == relaDyn.getParent())
     size += ctx.in.relaPlt->getSize();
-  if (ctx.in.relaDyn->getParent() == relaDyn.getParent())
-    size += ctx.in.relaDyn->getSize();
   return size;
 }
 
@@ -1390,13 +1452,7 @@ static uint64_t addRelaSz(Ctx &ctx, const RelocationBaseSection &relaDyn) {
 // output section. When this occurs we cannot just use the OutputSection
 // Size. Moreover the [DT_JMPREL, DT_JMPREL + DT_PLTRELSZ) is permitted to
 // overlap with the [DT_RELA, DT_RELA + DT_RELASZ).
-static uint64_t addPltRelSz(Ctx &ctx) {
-  size_t size = ctx.in.relaPlt->getSize();
-  if (ctx.in.relaDyn->getParent() == ctx.in.relaPlt->getParent() &&
-      (ctx.in.relaDyn->name == ctx.in.relaPlt->name))
-    size += ctx.in.relaDyn->getSize();
-  return size;
-}
+static uint64_t addPltRelSz(Ctx &ctx) { return ctx.in.relaPlt->getSize(); }
 
 // Add remaining entries to complete .dynamic contents.
 template <class ELFT>
@@ -1483,9 +1539,7 @@ DynamicSection<ELFT>::computeContents() {
   if (!ctx.arg.shared && !ctx.arg.relocatable && !ctx.arg.zRodynamic)
     addInt(DT_DEBUG, 0);
 
-  if (part.relaDyn->isNeeded() ||
-      (ctx.in.relaDyn->isNeeded() &&
-       part.relaDyn->getParent() == ctx.in.relaDyn->getParent())) {
+  if (part.relaDyn->isNeeded()) {
     addInSec(part.relaDyn->dynamicTag, *part.relaDyn);
     entries.emplace_back(part.relaDyn->sizeDynamicTag,
                          addRelaSz(ctx, *part.relaDyn));
@@ -1518,7 +1572,7 @@ DynamicSection<ELFT>::computeContents() {
     addInt(DT_AARCH64_AUTH_RELRSZ, part.relrAuthDyn->getParent()->size);
     addInt(DT_AARCH64_AUTH_RELRENT, sizeof(Elf_Relr));
   }
-  if (isMain && (ctx.in.relaPlt->isNeeded() || ctx.in.relaDyn->isNeeded())) {
+  if (isMain && ctx.in.relaPlt->isNeeded()) {
     addInSec(DT_JMPREL, *ctx.in.relaPlt);
     entries.emplace_back(DT_PLTRELSZ, addPltRelSz(ctx));
     switch (ctx.arg.emachine) {
@@ -1553,6 +1607,12 @@ DynamicSection<ELFT>::computeContents() {
       break;
     }
     addInt(DT_PLTREL, ctx.arg.isRela ? DT_RELA : DT_REL);
+  }
+
+  if (isMain && ctx.in.relaTgot->isNeeded()) {
+    addInSec(DT_CHERI_TGOTREL, *ctx.in.relaTgot);
+    addInt(DT_CHERI_TGOTRELSZ, ctx.in.relaTgot->getSize());
+    addInt(DT_CHERI_TGOTRELT, ctx.arg.isRela ? DT_RELA : DT_REL);
   }
 
   if (ctx.arg.emachine == EM_AARCH64) {
@@ -1673,14 +1733,19 @@ DynamicSection<ELFT>::computeContents() {
       addInt(DT_MIPS_CHERI_CAPTABLE_MAPPINGSZ,
              ctx.in.mipsCheriCapTableMapping->getParent()->size);
     }
-    if (ctx.in.capRelocs && ctx.in.capRelocs->isNeeded()) {
-      addInSec(DT_MIPS_CHERI___CAPRELOCS, *ctx.in.capRelocs);
-      addInt(DT_MIPS_CHERI___CAPRELOCSSZ, ctx.in.capRelocs->getParent()->size);
+    if (part.capRelocs && part.capRelocs->isNeeded()) {
+      addInSec(DT_MIPS_CHERI___CAPRELOCS, *part.capRelocs);
+      addInt(DT_MIPS_CHERI___CAPRELOCSSZ, part.capRelocs->getParent()->size);
     }
   } else if (ctx.arg.emachine == EM_RISCV) {
-    if (ctx.in.capRelocs && ctx.in.capRelocs->isNeeded()) {
-      addInSec(DT_RISCV_CHERI___CAPRELOCS, *ctx.in.capRelocs);
-      addInt(DT_RISCV_CHERI___CAPRELOCSSZ, ctx.in.capRelocs->getParent()->size);
+    if (part.capRelocs && part.capRelocs->isNeeded()) {
+      addInSec(DT_RISCV_CHERI___CAPRELOCS, *part.capRelocs);
+      addInt(DT_RISCV_CHERI___CAPRELOCSSZ, part.capRelocs->getParent()->size);
+    }
+    if (ctx.in.tgotCapRelocs && ctx.in.tgotCapRelocs->isNeeded()) {
+      addInSec(DT_RISCV_CHERI___TGOTCAPRELOCS, *ctx.in.tgotCapRelocs);
+      addInt(DT_RISCV_CHERI___TGOTCAPRELOCSSZ,
+             ctx.in.tgotCapRelocs->getParent()->size);
     }
   }
 
@@ -1818,13 +1883,17 @@ void RelocationBaseSection::partitionRels() {
     return;
   const RelType relativeRel = ctx.target->relativeRel;
   const std::optional<RelType> relativeFuncRel = ctx.target->relativeFuncRel;
-  numRelativeRelocs = std::stable_partition(relocs.begin(), relocs.end(),
-                                            [=](auto &r) {
-                                              return r.type == relativeRel ||
-                                                     r.type == relativeFuncRel ||
-                                                     r.type == R_RISCV_CHERI_RELATIVE;
-                                            }) -
-                      relocs.begin();
+  const std::optional<RelType> relativeCapRel =
+      ctx.arg.emachine == EM_RISCV ? std::optional(R_RISCV_CHERI_RELATIVE)
+                                   : std::nullopt;
+  numRelativeRelocs =
+      std::stable_partition(relocs.begin(), relocs.end(),
+                            [=](auto &r) {
+                              return r.type == relativeRel ||
+                                     r.type == relativeFuncRel ||
+                                     r.type == relativeCapRel;
+                            }) -
+      relocs.begin();
 }
 
 void RelocationBaseSection::finalizeContents() {
@@ -1849,13 +1918,10 @@ void RelocationBaseSection::finalizeContents() {
       if (ctx.in.relaPlt.get() == this)
         getParent()->info = ctx.in.gotPlt->getParent()->sectionIndex;
     }
-    if (ctx.in.relaDyn.get() == this) {
-      if (ctx.in.igotPlt && ctx.in.igotPlt->isNeeded()) {
-        getParent()->info = ctx.in.igotPlt->getParent()->sectionIndex;
-      } else if (!ctx.arg.hasDynSymTab) {
-        getParent()->info = 0;
-      }
-    }
+  }
+  if (ctx.in.relaTgot.get() == this && ctx.in.tgot->getParent()) {
+    getParent()->flags |= ELF::SHF_INFO_LINK;
+    getParent()->info = ctx.in.tgot->getParent()->sectionIndex;
   }
   for (auto reloc : relocs) {
     if (ctx.arg.isCheriAbi && reloc.inputSec->name == "__cap_relocs") {
@@ -4888,8 +4954,6 @@ template <class ELFT> void elf::createSyntheticSections(Ctx &ctx) {
   add(*ctx.in.bssRelRo);
 
   if (ctx.arg.capabilitySize > 0) {
-    ctx.in.capRelocs = std::make_unique<CheriCapRelocsSection>(ctx, "__cap_relocs");
-
     if (ctx.arg.emachine == EM_MIPS) {
       ctx.in.mipsCheriCapTable = std::make_unique<MipsCheriCapTableSection>(ctx);
       add(*ctx.in.mipsCheriCapTable);
@@ -4944,6 +5008,10 @@ template <class ELFT> void elf::createSyntheticSections(Ctx &ctx) {
     part.dynStrTab = std::make_unique<StringTableSection>(ctx, ".dynstr", true);
     part.dynSymTab =
         std::make_unique<SymbolTableSection<ELFT>>(ctx, *part.dynStrTab);
+
+    if (ctx.arg.capabilitySize > 0)
+      part.capRelocs =
+          std::make_unique<CheriCapRelocsSection>(ctx, "__cap_relocs");
 
     if (ctx.arg.relocatable)
       continue;
@@ -5063,6 +5131,8 @@ template <class ELFT> void elf::createSyntheticSections(Ctx &ctx) {
   add(*ctx.in.gotPlt);
   ctx.in.igotPlt = std::make_unique<IgotPltSection>(ctx);
   add(*ctx.in.igotPlt);
+  ctx.in.tgot = std::make_unique<TgotSection>(ctx);
+  add(*ctx.in.tgot);
   // Add .relro_padding if DATA_SEGMENT_RELRO_END is used; otherwise, add the
   // section in the absence of PHDRS/SECTIONS commands.
   if (ctx.arg.zRelro &&
@@ -5093,17 +5163,14 @@ template <class ELFT> void elf::createSyntheticSections(Ctx &ctx) {
       /*threadCount=*/1);
   add(*ctx.in.relaPlt);
 
-  // add the dynRela section
-  if (ctx.arg.emachine == EM_RISCV && ctx.arg.useRelativeElfCheriRelocs)
-    ctx.in.relaDyn =
-        std::make_unique<RelocationSection<ELFT>>(ctx, relaDynName, false, 1);
-  else if (ctx.arg.androidPackDynRelocs)
-    ctx.in.relaDyn =
-        std::make_unique<AndroidPackedRelocationSection<ELFT>>(ctx, relaDynName, 1);
-  else
-    ctx.in.relaDyn = std::make_unique<RelocationSection<ELFT>>(ctx,
-        relaDynName, ctx.arg.zCombreloc, 1);
-  add(*ctx.in.relaDyn);
+  ctx.in.relaTgot = std::make_unique<RelocationSection<ELFT>>(
+      ctx, ctx.arg.isRela ? ".rela.tgot" : ".rel.tgot", /*sort=*/false,
+      /*threadCount=*/1);
+  add(*ctx.in.relaTgot);
+
+  if (ctx.arg.isCheriAbi)
+    ctx.in.tgotCapRelocs =
+        std::make_unique<CheriCapRelocsSection>(ctx, "__tgot_cap_relocs");
 
   if ((ctx.arg.emachine == EM_386 || ctx.arg.emachine == EM_X86_64) &&
       (ctx.arg.andFeatures & GNU_PROPERTY_X86_FEATURE_1_IBT)) {
@@ -5118,6 +5185,11 @@ template <class ELFT> void elf::createSyntheticSections(Ctx &ctx) {
   add(*ctx.in.plt);
   ctx.in.iplt = std::make_unique<IpltSection>(ctx);
   add(*ctx.in.iplt);
+
+  if (ctx.arg.isCheriAbi && needsCheriPccSegment(ctx)) {
+    ctx.in.pccPadding = std::make_unique<CheriPccPaddingSection>(ctx);
+    add(*ctx.in.pccPadding);
+  }
 
   if (ctx.arg.andFeatures || !ctx.aarch64PauthAbiCoreInfo.empty()) {
     ctx.in.gnuProperty = std::make_unique<GnuPropertySection>(ctx);
@@ -5153,6 +5225,8 @@ template <class ELFT> void elf::createSyntheticSections(Ctx &ctx) {
   if (ctx.in.strTab)
     add(*ctx.in.strTab);
 }
+
+Partition::Partition(Ctx &ctx) : ctx(ctx) {}
 
 template void elf::splitSections<ELF32LE>(Ctx &);
 template void elf::splitSections<ELF32BE>(Ctx &);

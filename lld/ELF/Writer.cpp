@@ -61,6 +61,7 @@ private:
   void finalizeAddressDependentContent();
   void optimizeBasicBlockJumps();
   void sortInputSections();
+  void sortCheriPccPaddingSection();
   void sortOrphanSections();
   void finalizeSections();
   void checkExecuteOnly();
@@ -87,6 +88,7 @@ private:
   ThunkCreator tc;
 
   void addRelIpltSymbols();
+  void addRelTgotSymbols();
   void addCapDynRelocsSymbols(Ctx &);
   void addStartEndSymbols();
   void addStartStopSymbols(OutputSection &osec);
@@ -575,8 +577,9 @@ template <class ELFT> void Writer<ELFT>::addSectionSymbols() {
 //
 // This function returns true if a section needs to be put into a
 // PT_GNU_RELRO segment.
-bool elf::isRelroSection(Ctx &ctx, const OutputSection *sec) {
-  if (!ctx.arg.zRelro)
+bool elf::isRelroSection(Ctx &ctx, const OutputSection *sec,
+                         bool ignoreZRelro) {
+  if (!ignoreZRelro && !ctx.arg.zRelro)
     return false;
   if (sec->relro)
     return true;
@@ -673,16 +676,18 @@ bool elf::isRelroSection(Ctx &ctx, const OutputSection *sec) {
 // * It is easy to check if a give branch was taken.
 // * It is easy two see how similar two ranks are (see getRankProximity).
 enum RankFlags {
-  RF_NOT_ADDR_SET = 1 << 27,
-  RF_NOT_ALLOC = 1 << 26,
-  RF_PARTITION = 1 << 18, // Partition number (8 bits)
-  RF_LARGE_ALT = 1 << 15,
-  RF_WRITE = 1 << 14,
-  RF_EXEC_WRITE = 1 << 13,
-  RF_EXEC = 1 << 12,
-  RF_RODATA = 1 << 11,
-  RF_LARGE = 1 << 10,
-  RF_NOT_RELRO = 1 << 9,
+  RF_NOT_ADDR_SET = 1 << 29,
+  RF_NOT_ALLOC = 1 << 28,
+  RF_PARTITION = 1 << 20, // Partition number (8 bits)
+  RF_LARGE_ALT = 1 << 19,
+  RF_WRITE = 1 << 18,
+  RF_PCC_WRITE = 1 << 17,
+  RF_EXEC_WRITE = 1 << 16,
+  RF_EXEC = 1 << 15,
+  RF_PCC_RODATA = 1 << 14,
+  RF_RODATA = 1 << 13,
+  RF_LARGE = 1 << 12,
+  RF_PCC_EQ_RELRO = 1 << 9,
   RF_NOT_TLS = 1 << 8,
   RF_BSS = 1 << 7,
 };
@@ -701,8 +706,21 @@ unsigned elf::getSectionRank(Ctx &ctx, OutputSection &osec) {
   if (!(osec.flags & SHF_ALLOC))
     return rank | RF_NOT_ALLOC;
 
-  // Sort sections based on their access permission in the following
-  // order: R, RX, RXW, RW(RELRO), RW(non-RELRO).
+  // Sort sections based on their access permission and whether they need to be
+  // within PCC's bounds for CHERI in the following order:
+  //
+  //  * R(non-PCC)
+  //  * R(PCC)
+  //  * RX
+  //  * RXW
+  //  * RW(PCC,non-RELRO)[^1]
+  //  * RW(PCC,RELRO)
+  //  * RW(non-PCC,RELRO)
+  //  * RW(non-PCC,non-RELRO)
+  //
+  // [^1]: RelocationScanner::processAux ignores such cases for input files,
+  //       but this can occur for synthetic sections, in particular .got.plt
+  //       without -z now.
   //
   // Read-only sections come first such that they go in the PT_LOAD covering the
   // program headers at the start of the file.
@@ -714,6 +732,8 @@ unsigned elf::getSectionRank(Ctx &ctx, OutputSection &osec) {
   // places.
   bool isExec = osec.flags & SHF_EXECINSTR;
   bool isWrite = osec.flags & SHF_WRITE;
+  bool isPcc = ctx.in.pccPadding && ctx.in.pccPadding->isNeeded() &&
+               osec.cheriPcc.load(std::memory_order_relaxed);
 
   if (!isWrite && !isExec) {
     // Among PROGBITS sections, place .lrodata further from .text.
@@ -740,22 +760,27 @@ unsigned elf::getSectionRank(Ctx &ctx, OutputSection &osec) {
     // Make PROGBITS sections (e.g .rodata .eh_frame) closer to .text to
     // alleviate relocation overflow pressure. Large special sections such as
     // .dynstr and .dynsym can be away from .text.
-    else if (osec.type != SHT_PROGBITS)
+    // Treat __(tgot_)cap_relocs like REL* even though it's PROGBITS.
+    // Special sections accessed via PCC need to be sorted later like normal
+    // sections, though (e.g. for self-relocating static binaries).
+    else if ((osec.type != SHT_PROGBITS || osec.name == "__cap_relocs" ||
+              osec.name == "__tgot_cap_relocs") &&
+             !isPcc)
       rank |= 4;
     else
-      rank |= RF_RODATA;
+      rank |= isPcc ? RF_PCC_RODATA : RF_RODATA;
   } else if (isExec) {
     rank |= isWrite ? RF_EXEC_WRITE : RF_EXEC;
   } else {
-    rank |= RF_WRITE;
+    rank |= isPcc ? RF_PCC_WRITE : RF_WRITE;
     // The TLS initialization block needs to be a single contiguous block. Place
     // TLS sections directly before the other RELRO sections.
     if (!(osec.flags & SHF_TLS))
       rank |= RF_NOT_TLS;
     if (isRelroSection(ctx, &osec))
       osec.relro = true;
-    else
-      rank |= RF_NOT_RELRO;
+    if (isPcc == isRelroSection(ctx, &osec))
+      rank |= RF_PCC_EQ_RELRO;
     // Place .ldata and .lbss after .bss. Making .bss closer to .text
     // alleviates relocation overflow pressure.
     // For -z lrodata-after-bss, place .lbss/.lrodata/.ldata after .bss.
@@ -898,10 +923,10 @@ template <class ELFT> void Writer<ELFT>::setReservedSymbolSections() {
   }
 
   // __rela_dyn_{start,end} symbols if needed.
-  if (ctx.sym.relaDynStart && ctx.in.relaDyn->isNeeded()) {
-    ctx.sym.relaDynStart->section = ctx.in.relaDyn.get();
-    ctx.sym.relaDynEnd->section = ctx.in.relaDyn.get();
-    ctx.sym.relaDynEnd->value = ctx.in.relaDyn->getSize();
+  if (ctx.sym.relaDynStart && ctx.mainPart->relaDyn->isNeeded()) {
+    ctx.sym.relaDynStart->section = ctx.mainPart->relaDyn.get();
+    ctx.sym.relaDynEnd->section = ctx.mainPart->relaDyn.get();
+    ctx.sym.relaDynEnd->value = ctx.mainPart->relaDyn->getSize();
     ctx.sym.relaDynEnd->isSectionStartSymbol = false;
   }
 
@@ -1317,6 +1342,50 @@ template <class ELFT> void Writer<ELFT>::sortInputSections() {
       sortSection(ctx, osd->osec, order);
 }
 
+// The CHERI PCC padding output section must be placed immediately after the
+// last section covered by the PCC bounds.
+template <class ELFT> void Writer<ELFT>::sortCheriPccPaddingSection() {
+  CheriPccPaddingSection *psec = ctx.in.pccPadding.get();
+  if (!psec->isNeeded())
+    return;
+
+  // First, find and remove the existing padding output section.
+  auto isPaddingSection = [&](SectionCommand *cmd) {
+    auto *to = dyn_cast<OutputDesc>(cmd);
+    return to != nullptr && psec->getParent() == &to->osec;
+  };
+  auto fromPos = llvm::find_if(ctx.script->sectionCommands, isPaddingSection);
+  assert(fromPos != ctx.script->sectionCommands.end() &&
+         "PCC padding section not found");
+  auto paddingSec = *fromPos;
+  ctx.script->sectionCommands.erase(fromPos);
+
+  // Second, find the last CHERI PCC output section.
+  auto isPccSection = [&](SectionCommand *cmd) {
+    auto *to = dyn_cast<OutputDesc>(cmd);
+    return to != nullptr && to->osec.cheriPcc;
+  };
+
+  auto insertPos = llvm::find_if(ctx.script->sectionCommands, isPccSection);
+  assert(insertPos != ctx.script->sectionCommands.end() &&
+         "did not find first PCC section");
+  for (;;) {
+    auto nextPos = std::find_if(
+        insertPos + 1, ctx.script->sectionCommands.end(), isPccSection);
+    if (nextPos == ctx.script->sectionCommands.end())
+      break;
+    insertPos = nextPos;
+  }
+
+  // Change the flags of the padding output section to match the last CHERI PCC
+  // output section so it is treated as part of the same load segment.
+  cast<OutputDesc>(paddingSec)->osec.flags =
+      cast<OutputDesc>(*insertPos)->osec.flags;
+
+  // Insert the padding output section in its new location.
+  ctx.script->sectionCommands.insert(insertPos + 1, paddingSec);
+}
+
 template <class ELFT> void Writer<ELFT>::sortSections() {
   llvm::TimeTraceScope timeScope("Sort sections");
 
@@ -1350,6 +1419,9 @@ template <class ELFT> void Writer<ELFT>::sortSections() {
 
   if (ctx.script->hasSectionsCommand)
     sortOrphanSections();
+
+  if (ctx.in.pccPadding)
+    sortCheriPccPaddingSection();
 
   ctx.script->adjustSectionsAfterSorting();
 }
@@ -1580,6 +1652,12 @@ template <class ELFT> void Writer<ELFT>::finalizeAddressDependentContent() {
       break;
     }
 
+    if (ctx.arg.isCheriAbi && !ctx.arg.relocatable) {
+      if (changed)
+        ctx.script->assignAddresses();
+      changed |= cheriCapabilityBoundsAlign(ctx);
+    }
+
     if (ctx.arg.fixCortexA53Errata843419) {
       if (changed)
         ctx.script->assignAddresses();
@@ -1757,6 +1835,119 @@ template <class ELFT> void Writer<ELFT>::optimizeBasicBlockJumps() {
   for (OutputSection *osec : ctx.outputSections)
     for (InputSection *is : getInputSections(*osec, storage))
       is->trim();
+}
+
+// Which output sections are always covered by CHERI PCC bounds.  This includes
+// executable sections, GOTs, and PCC padding.
+static bool isCheriBoundsSection(Ctx &ctx, const OutputSection *sec) {
+  uint64_t flags = sec->flags;
+
+  // Non-allocatable sections are not mapped into memory.
+  if (!(flags & SHF_ALLOC))
+    return false;
+
+  // Executable sections are fetched via PCC.
+  if (flags & SHF_EXECINSTR)
+    return true;
+
+  // .got is accessed relative to PCC.
+  if (ctx.in.got && sec == ctx.in.got->getParent())
+    return true;
+  if (ctx.in.mipsGot && sec == ctx.in.mipsGot->getParent())
+    return true;
+
+  // .got.plt is accessed relative to PCC.
+  if (sec == ctx.in.gotPlt->getParent())
+    return true;
+  if (sec == ctx.in.igotPlt->getParent())
+    return true;
+
+  // CHERI-MIPS capability table is accessed relative to PCC.
+  if (ctx.in.mipsCheriCapTable && sec == ctx.in.mipsCheriCapTable->getParent())
+    return true;
+
+  // The PCC padding section is included in PCC bounds.
+  if (sec == ctx.in.pccPadding->getParent())
+    return true;
+
+  // XXX: CheriBSD's runtime loader assumes all read-only capabilities can be
+  // derived from PCC, so include all read-only sections as a workaround for
+  // now.  Once CheriBSD 25.03 is no longer supported, this can be removed.
+  // Treat __(tgot_)cap_relocs like REL* even though it's PROGBITS.
+  if (sec->type == SHT_PROGBITS && sec->name != "__cap_relocs" &&
+      sec->name != "__tgot_cap_relocs" && sec != ctx.in.tgot->getParent() &&
+      (flags & SHF_TLS) == 0 &&
+      ((flags & SHF_WRITE) == 0 ||
+       isRelroSection(ctx, sec, /*ignoreZRelro=*/true)))
+    return true;
+
+  return false;
+}
+
+// Mark all output sections covered by CHERI PCC bounds.  In addition,
+// enable the padding section for the associated compartment.
+static void markCheriPccSections(Ctx &ctx) {
+  // Mark padding section as needed as long as there is at least one executable
+  // input section.
+  for (InputSectionBase *s : ctx.inputSections) {
+    // Ignore unused synthetic sections
+    if (isa<SyntheticSection>(s)) {
+      auto *sec = cast<SyntheticSection>(s);
+      if (!(sec->getParent() && sec->isNeeded()))
+        continue;
+    }
+    // Ignore empty input sections
+    if (s->getSize() == 0)
+      continue;
+    if ((s->flags & (SHF_ALLOC | SHF_EXECINSTR)) ==
+        (SHF_ALLOC | SHF_EXECINSTR)) {
+      ctx.in.pccPadding->markNeeded();
+      break;
+    }
+  }
+
+  // Even if all executable input sections are empty, there may be a symbol
+  // defined in one, for which we need to have CHERI PCC bounds.
+  if (!ctx.in.pccPadding->isNeeded()) {
+    for (Symbol *sym : ctx.symtab->getSymbols()) {
+      Defined *d = dyn_cast<Defined>(sym);
+      if (!d || !d->section)
+        continue;
+      if ((d->section->flags & (SHF_ALLOC | SHF_EXECINSTR)) ==
+          (SHF_ALLOC | SHF_EXECINSTR)) {
+        ctx.in.pccPadding->markNeeded();
+        break;
+      }
+    }
+  }
+
+  if (!ctx.in.pccPadding->isNeeded()) {
+    for (ELFFileBase *file : ctx.objectFiles) {
+      for (Symbol *sym : file->getLocalSymbols()) {
+        Defined *d = dyn_cast<Defined>(sym);
+        if (!d || !d->section)
+          continue;
+        if ((d->section->flags & (SHF_ALLOC | SHF_EXECINSTR)) ==
+            (SHF_ALLOC | SHF_EXECINSTR)) {
+          ctx.in.pccPadding->markNeeded();
+          break;
+        }
+      }
+    }
+  }
+
+  if (!ctx.in.pccPadding->isNeeded())
+    return;
+
+  // Mark all output sections accessed via PCC if there is at least one
+  // executable input section.
+  for (SectionCommand *cmd : ctx.script->sectionCommands) {
+    if (auto *osd = dyn_cast<OutputDesc>(cmd)) {
+      OutputSection &osec = osd->osec;
+      if (isCheriBoundsSection(ctx, &osec))
+        osec.cheriPcc.store(true, std::memory_order_relaxed);
+    }
+  }
 }
 
 // In order to allow users to manipulate linker-synthesized sections,
@@ -1975,9 +2166,9 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
 
     // Now handle __cap_relocs (must be before RelaDyn because it might
     // result in new dynamic relocations being added)
-    if (ctx.in.capRelocs) {
-      finalizeSynthetic(ctx, ctx.in.capRelocs.get());
-    }
+    for (Partition &part : ctx.partitions)
+      finalizeSynthetic(ctx, part.capRelocs.get());
+    finalizeSynthetic(ctx, ctx.in.tgotCapRelocs.get());
     if (ctx.in.plt && ctx.in.plt->isNeeded())
       ctx.in.plt->addSymbols();
     if (ctx.in.iplt && ctx.in.iplt->isNeeded())
@@ -2067,6 +2258,8 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
   if (ctx.in.mipsGot)
     ctx.in.mipsGot->build();
 
+  if (ctx.in.pccPadding)
+    markCheriPccSections(ctx);
   removeUnusedSyntheticSections(ctx);
   ctx.script->diagnoseOrphanHandling();
   ctx.script->diagnoseMissingSGSectionAddress();
@@ -2143,9 +2336,12 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
     // Android relocation packing can look up TLS symbol addresses. We only need
     // to care about the main partition here because all TLS symbols were moved
     // to the main partition (see MarkLive.cpp).
-    for (auto &p : ctx.mainPart->phdrs)
+    for (auto &p : ctx.mainPart->phdrs) {
       if (p->p_type == PT_TLS)
         ctx.tlsPhdr = p.get();
+      if (p->p_type == PT_CHERI_TGOT)
+        ctx.tgotPhdr = p.get();
+    }
   }
 
   // Some symbols are defined in term of program headers. Now that we
@@ -2169,12 +2365,14 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
     finalizeSynthetic(ctx, ctx.in.mipsGot.get());
     finalizeSynthetic(ctx, ctx.in.igotPlt.get());
     finalizeSynthetic(ctx, ctx.in.gotPlt.get());
+    finalizeSynthetic(ctx, ctx.in.tgot.get());
+    finalizeSynthetic(ctx, ctx.in.pccPadding.get());
     finalizeSynthetic(ctx, ctx.in.relaPlt.get());
+    finalizeSynthetic(ctx, ctx.in.relaTgot.get());
     finalizeSynthetic(ctx, ctx.in.plt.get());
     finalizeSynthetic(ctx, ctx.in.iplt.get());
     finalizeSynthetic(ctx, ctx.in.ppc32Got2.get());
     finalizeSynthetic(ctx, ctx.in.partIndex.get());
-    finalizeSynthetic(ctx, ctx.in.relaDyn.get());
 
     // Dynamic section must be the last one in this list and dynamic
     // symbol table section (dynSymTab) must be the first one.
@@ -2441,7 +2639,10 @@ Writer<ELFT>::createPhdrs(Partition &part) {
   for (OutputSection *sec : ctx.outputSections) {
     if (sec->partition != partNo || !needsPtLoad(sec))
       continue;
-    if (isRelroSection(ctx, sec)) {
+    // Treat a CHERI PCC padding section as relro if it is preceded by a relro
+    // section.
+    if (isRelroSection(ctx, sec) || (ctx.in.pccPadding && inRelroPhdr &&
+                                     sec == ctx.in.pccPadding->getParent())) {
       inRelroPhdr = true;
       if (!relroEnd)
         relRo->add(sec);
@@ -2454,6 +2655,20 @@ Writer<ELFT>::createPhdrs(Partition &part) {
     }
   }
   relRo->p_align = 1;
+
+  // Determine the sections PCC should cover.
+  std::unique_ptr<PhdrEntry> cheriBounds;
+  if (ctx.in.pccPadding) {
+    cheriBounds = std::make_unique<PhdrEntry>(ctx, PT_CHERI_PCC, PF_R | PF_X);
+
+    for (OutputSection *sec : ctx.outputSections) {
+      if (sec->partition != partNo || !needsPtLoad(sec))
+        continue;
+      if (!sec->cheriPcc.load(std::memory_order_relaxed))
+        continue;
+      cheriBounds->add(sec);
+    }
+  }
 
   for (OutputSection *sec : ctx.outputSections) {
     if (!needsPtLoad(sec))
@@ -2487,6 +2702,11 @@ Writer<ELFT>::createPhdrs(Partition &part) {
     // supposed-to-be-NOBITS section to the output file. (However, we cannot do
     // so when hasSectionsCommand, since we cannot introduce the extra alignment
     // needed to create a new LOAD)
+    //
+    // We also start a new segment for TLS sections as with PCC-based sorting
+    // they may no longer implicitly be the start of the first (or any other)
+    // RW PT_LOAD (specifically if there's at least one RW(PCC,RELRO) section);
+    // for why this is needed see fixSectionAlignments.
     uint64_t newFlags = computeFlags(ctx, sec->getPhdrFlags());
     // When --no-rosegment is specified, RO and RX sections are compatible.
     uint32_t incompatible = flags ^ newFlags;
@@ -2497,8 +2717,9 @@ Writer<ELFT>::createPhdrs(Partition &part) {
 
     bool sameLMARegion =
         load && !sec->lmaExpr && sec->lmaRegion == load->firstSec->lmaRegion;
-    if (load && sec != relroEnd &&
+    if (load && sec != relRo->firstSec && sec != relroEnd &&
         sec->memRegion == load->firstSec->memRegion &&
+        ((load->firstSec->flags & SHF_TLS) || !(sec->flags & SHF_TLS)) &&
         (sameLMARegion || load->lastSec == ctx.out.programHeaders.get()) &&
         (ctx.script->hasSectionsCommand || sec->type == SHT_NOBITS ||
          load->lastSec->type != SHT_NOBITS)) {
@@ -2519,12 +2740,25 @@ Writer<ELFT>::createPhdrs(Partition &part) {
   if (tlsHdr->firstSec)
     ret.push_back(std::move(tlsHdr));
 
+  // Add an entry for .tgot.
+  if (ctx.in.tgot->isNeeded()) {
+    OutputSection *sec = ctx.in.tgot->getParent();
+    addHdr(PT_CHERI_TGOT, sec->getPhdrFlags())->add(sec);
+  }
+
   // Add an entry for .dynamic.
   if (OutputSection *sec = part.dynamic->getParent())
     addHdr(PT_DYNAMIC, sec->getPhdrFlags())->add(sec);
 
   if (relRo->firstSec)
     ret.push_back(std::move(relRo));
+
+  if (cheriBounds) {
+    if (cheriBounds->firstSec) {
+      ret.push_back(std::move(cheriBounds));
+      ctx.cheriBounds = ret.back().get();
+    }
+  }
 
   // PT_GNU_EH_FRAME is a special section pointing on .eh_frame_hdr.
   if (part.ehFrame->isNeeded() && part.ehFrameHdr &&

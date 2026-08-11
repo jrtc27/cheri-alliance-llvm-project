@@ -116,11 +116,20 @@ public:
   bool addTlsDescEntry(const Symbol &sym);
   void addTlsDescAuthEntry();
   bool addDynTlsEntry(const Symbol &sym);
+  void addTgotEntry(Symbol &sym);
+  void addTgotTlsDescEntry(Symbol &sym);
+  bool addTgotDynTlsEntry(Symbol &sym);
   bool addTlsIndex();
   uint32_t getTlsDescOffset(const Symbol &sym) const;
   uint64_t getTlsDescAddr(const Symbol &sym) const;
   uint64_t getGlobalDynAddr(const Symbol &b) const;
   uint64_t getGlobalDynOffset(const Symbol &b) const;
+  uint64_t getTgotAddr(const Symbol &b) const;
+  uint64_t getTgotOffset(const Symbol &b) const;
+  uint64_t getTgotTlsDescAddr(const Symbol &b) const;
+  uint64_t getTgotTlsDescOffset(const Symbol &b) const;
+  uint64_t getTgotGlobalDynAddr(const Symbol &b) const;
+  uint64_t getTgotGlobalDynOffset(const Symbol &b) const;
 
   uint64_t getTlsIndexVA() { return this->getVA() + tlsIndexOff; }
   uint32_t getTlsIndexOff() const { return tlsIndexOff; }
@@ -399,6 +408,19 @@ private:
   SmallVector<const Symbol *, 0> entries;
 };
 
+class TgotSection final : public SyntheticSection {
+public:
+  TgotSection(Ctx &);
+  void addConstant(const Relocation &r);
+  void addEntry(Symbol &sym);
+  size_t getSize() const override;
+  void writeTo(uint8_t *buf) override;
+  bool isNeeded() const override { return numEntries > 0; }
+
+private:
+  size_t numEntries = 0;
+};
+
 class StringTableSection final : public SyntheticSection {
 public:
   StringTableSection(Ctx &, StringRef name, bool dynamic);
@@ -544,15 +566,24 @@ public:
                 RelType addendRelType, bool writeZero = false) {
     // Write the addends to the relocated address if required. We skip
     // it if the written value would be zero, unless forced.
-    if (ctx.arg.writeAddends && (expr != R_ADDEND || addend != 0 || writeZero))
-      sec.addReloc({expr, addendRelType, offsetInSec, addend, &sym});
+    // Capability addends are always written out and transform expr to the
+    // remainder of the addend.
+    if ((ctx.arg.writeAddends &&
+         (expr != R_ADDEND || addend != 0 || writeZero)) ||
+        expr == R_ABS_CAP)
+      sec.addReloc({expr, addendRelType, offsetInSec, addend, &sym}, &expr);
     addReloc<shard>({dynType, &sec, offsetInSec, kind, sym, addend, expr});
   }
   bool isNeeded() const override {
     return !relocs.empty() ||
            llvm::any_of(relocsVec, [](auto &v) { return !v.empty(); });
   }
-  size_t getSize() const override { return relocs.size() * this->entsize; }
+  size_t getSize() const override {
+    size_t count = relocs.size();
+    for (const auto &v : relocsVec)
+      count += v.size();
+    return count * this->entsize;
+  }
   size_t getRelativeRelocCount() const { return numRelativeRelocs; }
   void mergeRels();
   void partitionRels();
@@ -1455,6 +1486,23 @@ private:
   SmallVector<const Symbol *, 0> symbols;
 };
 
+class CheriPccPaddingSection final : public SyntheticSection {
+public:
+  CheriPccPaddingSection(Ctx &ctx)
+      : SyntheticSection(ctx, ".pad.cheri.pcc", llvm::ELF::SHT_PROGBITS,
+                         llvm::ELF::SHF_ALLOC, /*addralign=*/1) {}
+
+  void writeTo(uint8_t *buf) override {}
+  void markNeeded() { needed = true; }
+  bool isNeeded() const override { return needed; }
+  size_t getSize() const override { return size; }
+  void setSize(uint64_t len) { size = len; }
+
+private:
+  uint64_t size = 0;
+  bool needed = false;
+};
+
 template <class ELFT> void createSyntheticSections(Ctx &);
 InputSection *createInterpSection(Ctx &);
 MergeInputSection *createCommentSection(Ctx &);
@@ -1523,11 +1571,12 @@ struct Partition {
   std::unique_ptr<RelocationBaseSection> relaDyn;
   std::unique_ptr<RelrBaseSection> relrDyn;
   std::unique_ptr<RelrBaseSection> relrAuthDyn;
+  std::unique_ptr<CheriCapRelocsSection> capRelocs;
   std::unique_ptr<VersionDefinitionSection> verDef;
   std::unique_ptr<SyntheticSection> verNeed;
   std::unique_ptr<VersionTableSection> verSym;
 
-  Partition(Ctx &ctx) : ctx(ctx) {}
+  Partition(Ctx &ctx);
   unsigned getNumber(Ctx &ctx) const { return this - &ctx.partitions[0] + 1; }
 };
 

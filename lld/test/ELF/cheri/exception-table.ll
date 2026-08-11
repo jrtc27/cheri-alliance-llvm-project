@@ -28,13 +28,13 @@
 ;; This should work with both -z text and -z notext
 ;; Check that .gcc_except_table ends up in the relro section and the relocations are correct
 ; RUN: ld.lld -shared %t/mips.o -o %t/mips.so -z notext
-; RUN: llvm-readelf -r --section-mapping --sections --program-headers --cap-relocs  %t/mips.so | FileCheck %s --check-prefixes=HEADERS,MIPS-RELOCS
+; RUN: llvm-readelf -r --section-mapping --sections --program-headers --symbols --cap-relocs  %t/mips.so | FileCheck %s --check-prefixes=HEADERS,MIPS-RELOCS
 ; RUN: ld.lld -shared %t/mips.o -o %t/mips.so -z text
-; RUN: llvm-readelf -r --section-mapping --sections --program-headers --cap-relocs  %t/mips.so | FileCheck %s --check-prefixes=HEADERS,MIPS-RELOCS
+; RUN: llvm-readelf -r --section-mapping --sections --program-headers --symbols --cap-relocs  %t/mips.so | FileCheck %s --check-prefixes=HEADERS,MIPS-RELOCS
 ; RUN: ld.lld -shared %t/mips.o %t/mips-override.o -o %t/mips.so 
-; RUN: llvm-readelf -r --section-mapping --sections --program-headers --cap-relocs  %t/mips.so | FileCheck %s --check-prefixes=HEADERS,MIPS-RELOCS
+; RUN: llvm-readelf -r --section-mapping --sections --program-headers --symbols --cap-relocs  %t/mips.so | FileCheck %s --check-prefixes=HEADERS,MIPS-RELOCS
 
-; HEADERS-LABEL: There are 10 program headers, starting at
+; HEADERS-LABEL: There are 12 program headers, starting at
 ; HEADERS-EMPTY:
 ; HEADERS-NEXT: Program Headers:
 ; HEADERS-NEXT: Type           Offset   VirtAddr PhysAddr FileSiz  MemSiz   Flg Align
@@ -43,8 +43,10 @@
 ; HEADERS-NEXT: LOAD           0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} R E 0x10000
 ; HEADERS-NEXT: LOAD           0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} RW  0x10000
 ; HEADERS-NEXT: LOAD           0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} RW  0x10000
+; HEADERS-NEXT: LOAD           0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} RW  0x10000
 ; HEADERS-NEXT: DYNAMIC        0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} R   0x8
 ; HEADERS-NEXT: GNU_RELRO      0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} R   0x1
+; HEADERS-NEXT: CHERI_PCC      0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} R E 0x10
 ; HEADERS-NEXT: GNU_STACK      0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} RW  0x0
 ; HEADERS-NEXT: OPTIONS        0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} R   0x8
 ; HEADERS-NEXT: ABIFLAGS       0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} 0x{{.+}} R   0x8
@@ -52,15 +54,17 @@
 ; HEADERS-NEXT: Section to Segment mapping:
 ; HEADERS-NEXT: Segment Sections...
 ; HEADERS-NEXT: 00
-; HEADERS-NEXT: 01     .MIPS.abiflags .MIPS.options .dynsym .hash .dynamic .dynstr .rel.dyn .rel.plt .eh_frame __cap_relocs {{$}}
+; HEADERS-NEXT: 01     .MIPS.abiflags .MIPS.options .dynsym .hash .dynamic .dynstr .rel.dyn .rel.plt __cap_relocs .eh_frame {{$}}
 ; HEADERS-NEXT: 02     .text
-; HEADERS-NEXT: 03     .gcc_except_table
-; HEADERS-NEXT: 04     .data .captable .got
-; HEADERS-NEXT: 05     .dynamic
-; HEADERS-NEXT: 06     .gcc_except_table
-; HEADERS-NEXT: 07
-; HEADERS-NEXT: 08     .MIPS.options
-; HEADERS-NEXT: 09     .MIPS.abiflags
+; HEADERS-NEXT: 03     .captable .got
+; HEADERS-NEXT: 04     .gcc_except_table .pad.cheri.pcc .relro_padding
+; HEADERS-NEXT: 05     .data
+; HEADERS-NEXT: 06     .dynamic
+; HEADERS-NEXT: 07     .gcc_except_table .pad.cheri.pcc .relro_padding
+; HEADERS-NEXT: 08     .eh_frame .text .captable .got .gcc_except_table .pad.cheri.pcc {{$}}
+; HEADERS-NEXT: 09
+; HEADERS-NEXT: 10     .MIPS.options
+; HEADERS-NEXT: 11     .MIPS.abiflags
 ; HEADERS-NEXT: None   .bss .mdebug.abi64 .pdr .comment .symtab .shstrtab .strtab
 
 ; MIPS-RELOCS-LABEL:      Relocation section '.rel.dyn' {{.+}} contains 2 entries:
@@ -74,22 +78,27 @@
 ; MIPS-RELOCS-NEXT:                R_MIPS_CHERI_CAPABILITY_CALL/R_MIPS_NONE/R_MIPS_NONE 0000000000000000 __cxa_begin_catch
 ; MIPS-RELOCS-NEXT:                R_MIPS_CHERI_CAPABILITY_CALL/R_MIPS_NONE/R_MIPS_NONE 0000000000000000 __cxa_end_catch
 
+; MIPS-RELOCS-LABEL: Symbol table '.symtab' contains
+; MIPS-RELOCS: [[#%.16x,TEST_ADDR:]]        160 FUNC    LOCAL  DEFAULT    11 .L_Z4testll$local
+; MIPS-RELOCS: [[#%.16x,TEST2_ADDR:]]       164 FUNC    LOCAL  DEFAULT    11 .L_Z5test2ll$local
+; MIPS-RELOCS: [[#%.16x,TEST_WEAK_ADDR:]]    84 FUNC    LOCAL  DEFAULT    11 .L_Z9test_weakll$local
+
 ;; Local relocations for exception handling:
-; MIPS-RELOCS-NEXT: CHERI __cap_relocs [
-; MIPS-RELOCS-NEXT:   0x02{{.+}} Base: 0x1{{.+}} (.L_Z4testll$local+128) Length: 160 Perms: Function
-; MIPS-RELOCS-NEXT:   0x02{{.+}} Base: 0x1{{.+}} (.L_Z4testll$local+96) Length: 160 Perms: Function
-; MIPS-RELOCS-NEXT:   0x02{{.+}} Base: 0x1{{.+}} (.L_Z5test2ll$local+92) Length: 164 Perms: Function
-; MIPS-RELOCS-NEXT:   0x02{{.+}} Base: 0x1{{.+}} (.L_Z9test_weakll$local+52) Length: 84 Perms: Function
-; MIPS-RELOCS-NEXT: ]
+; MIPS-RELOCS-LABEL: CHERI capability relocation section '__cap_relocs' at offset {{.+}} contains 4 entries:
+; MIPS-RELOCS-NEXT:      Offset             Info         Type        Value
+; MIPS-RELOCS-NEXT:  {{0*}}3{{.+}}     8000000000000000 FUNC    [[#TEST_ADDR+128]] [{{[0-9a-f]+}}-{{[0-9a-f]+}}]
+; MIPS-RELOCS-NEXT:  {{0*}}3{{.+}}     8000000000000000 FUNC    [[#TEST_ADDR+96]] [{{[0-9a-f]+}}-{{[0-9a-f]+}}]
+; MIPS-RELOCS-NEXT:  {{0*}}3{{.+}}     8000000000000000 FUNC    [[#TEST2_ADDR+92]] [{{[0-9a-f]+}}-{{[0-9a-f]+}}]
+; MIPS-RELOCS-NEXT:  {{0*}}3{{.+}}     8000000000000000 FUNC    [[#TEST_WEAK_ADDR+52]] [{{[0-9a-f]+}}-{{[0-9a-f]+}}]
 
 ;; Should also emit __cap_relocs for RISC-V:
-; RUN: ld.lld -shared %t/riscv.o -o %t/riscv.so
-; RUN: llvm-readelf -S -r --symbols --cap-relocs %t/riscv.so | FileCheck %s --check-prefixes=RV64-RELOCS,RV64-RELOCS-WEAK
-; RUN: ld.lld -shared %t/riscv.o %t/riscv-override.o -o %t/riscv.so
-; RUN: llvm-readelf -S -r --symbols --cap-relocs %t/riscv.so | FileCheck %s --check-prefixes=RV64-RELOCS,RV64-RELOCS-OVERRIDE
+; RUN: ld.lld -z cheri-riscv-v9 -shared %t/riscv.o -o %t/riscv.so
+; RUN: llvm-readelf -r --sections --symbols --cap-relocs %t/riscv.so | FileCheck %s --check-prefixes=RV64-RELOCS,RV64-RELOCS-WEAK
+; RUN: ld.lld -z cheri-riscv-v9 -shared %t/riscv.o %t/riscv-override.o -o %t/riscv.so
+; RUN: llvm-readelf -r --sections --symbols --cap-relocs %t/riscv.so | FileCheck %s --check-prefixes=RV64-RELOCS,RV64-RELOCS-OVERRIDE
 
 ; RV64-RELOCS-LABEL: Section Headers:
-; RV64-RELOCS: [ [[TEXT_SECT_IDX:[0-9]+]]] .text PROGBITS
+; RV64-RELOCS: .plt PROGBITS [[#%.16x,PLT0_ADDR:]]
 
 ; RV64-RELOCS-LABEL: Symbol table '.symtab' contains
 ; RV64-RELOCS: [[#%.16x,TEST_ADDR:]]        116 FUNC    LOCAL  DEFAULT     9 .L_Z4testll$local
@@ -102,16 +111,16 @@
 ; RV64-RELOCS-OVERRIDE-NOT: [[#%.16x,TEST_WEAK_ADDR]]
 ; RV64-RELOCS-OVERRIDE: [[#%.16x,TEST_WEAK_OVERRIDE_ADDR:]] 8 FUNC    GLOBAL   DEFAULT     9 _Z9test_weakll{{$}}
 
-; RV64-RELOCS: CHERI __cap_relocs [
-; RV64-RELOCS-NEXT:   0x002{{.+}} Base: 0x[[#%x,TEST_ADDR]] (.L_Z4testll$local+92) Length: 116 Perms: Code
-; RV64-RELOCS-NEXT:   0x002{{.+}} Base: 0x[[#%x,TEST_ADDR]] (.L_Z4testll$local+72) Length: 116 Perms: Code
-; RV64-RELOCS-NEXT:   0x002{{.+}} Base: 0x[[#%x,TEST2_ADDR]] (.L_Z5test2ll$local+68) Length: 124 Perms: Code
+; RV64-RELOCS-LABEL: CHERI capability relocation section '__cap_relocs' at offset {{.+}} contains 7 entries:
+; RV64-RELOCS-NEXT:      Offset             Info         Type        Value
+; RV64-RELOCS-NEXT:  {{0*}}2{{.+}}     9000000000000000 CODE    [[#PLT0_ADDR]] [{{[0-9a-f]+}}-{{[0-9a-f]+}}]
+; RV64-RELOCS-NEXT:  {{0*}}2{{.+}}     9000000000000000 CODE    [[#PLT0_ADDR]] [{{[0-9a-f]+}}-{{[0-9a-f]+}}]
+; RV64-RELOCS-NEXT:  {{0*}}2{{.+}}     9000000000000000 CODE    [[#PLT0_ADDR]] [{{[0-9a-f]+}}-{{[0-9a-f]+}}]
+; RV64-RELOCS-NEXT:  {{0*}}3{{.+}}     9000000000000000 CODE    [[#TEST_ADDR+92]] [{{[0-9a-f]+}}-{{[0-9a-f]+}}]
+; RV64-RELOCS-NEXT:  {{0*}}3{{.+}}     9000000000000000 CODE    [[#TEST_ADDR+72]] [{{[0-9a-f]+}}-{{[0-9a-f]+}}]
+; RV64-RELOCS-NEXT:  {{0*}}3{{.+}}     9000000000000000 CODE    [[#TEST2_ADDR+68]] [{{[0-9a-f]+}}-{{[0-9a-f]+}}]
 ; Next one references the local symbol, and uses that length rather than the override:
-; RV64-RELOCS-NEXT:   0x002{{.+}} Base: 0x[[#%x,TEST_WEAK_ADDR]] (.L0 +28) Length: 52 Perms: Code
-; RV64-RELOCS-NEXT:   0x003{{.+}} Base: 0x[[#%x,PLT0_ADDR:]] (<unknown symbol>+0) Length: 80 Perms: Code
-; RV64-RELOCS-NEXT:   0x003{{.+}} Base: 0x[[#%x,PLT0_ADDR]] (<unknown symbol>+0) Length: 80 Perms: Code
-; RV64-RELOCS-NEXT:   0x003{{.+}} Base: 0x[[#%x,PLT0_ADDR]] (<unknown symbol>+0) Length: 80 Perms: Code
-; RV64-RELOCS-NEXT: ]
+; RV64-RELOCS-NEXT:  {{0*}}3{{.+}}     9000000000000000 CODE    [[#TEST_WEAK_ADDR+28]] [{{[0-9a-f]+}}-{{[0-9a-f]+}}]
 
 ; IR was generated from the following code:
 ; long external_fn(long arg);

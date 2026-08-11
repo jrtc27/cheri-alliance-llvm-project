@@ -10,13 +10,13 @@
 
 # But -pie is fine
 # RUN: ld.lld -pie %t.o -o %t.exe
-# RUN: llvm-readobj --dyn-relocations --cap-relocs %t.exe | FileCheck %s --check-prefix DYN-RELOCS
+# RUN: llvm-readobj -ls --dyn-relocations --cap-relocs %t.exe | FileCheck %s --check-prefix DYN-RELOCS
 
 # If we link at least one shared library we will have a dynamic linker
 # RUN: %cheri128_purecap_llvm-mc %s -filetype=obj -defsym=SHLIB=1 -o %t2.o
 # RUN: ld.lld -shared %t2.o -o %t.so
 # RUN: ld.lld %t.o %t.so -o %t2.exe
-# RUN: llvm-readobj --dyn-relocations --cap-relocs %t2.exe | FileCheck %s --check-prefix DYN-RELOCS
+# RUN: llvm-readobj -ls --dyn-relocations --cap-relocs %t2.exe | FileCheck %s --check-prefix DYN-RELOCS
 
 
 .ifdef MAIN
@@ -40,8 +40,23 @@ dummy_shlib:
   nop
 .endif
 
+# DYN-RELOCS:      Type: PT_CHERI_PCC
+# DYN-RELOCS-NEXT: Offset:
+# DYN-RELOCS-NEXT: VirtualAddress: 0x[[#%X,PCC_BASE:]]
+# DYN-RELOCS-NEXT: PhysicalAddress:
+# DYN-RELOCS-NEXT: FileSize:
+# DYN-RELOCS-NEXT: MemSize: [[#PCC_LENGTH:]]
+
 # DYN-RELOCS:      Dynamic Relocations {
 # DYN-RELOCS-NEXT: }
-# DYN-RELOCS:      CHERI __cap_relocs [
-# DYN-RELOCS-NEXT:   0x{{.+}} (capsym) Base: 0x{{.+}} (__start+0) Length: 4 Perms: Function
-# DYN-RELOCS:      ]
+
+# DYN-RELOCS:      Name: __start
+# DYN-RELOCS-NEXT: Value: 0x[[#%X,START:]]
+# DYN-RELOCS:      Name: capsym
+# DYN-RELOCS-NEXT: Value: 0x[[#%X,CAPSYM:]]
+
+# DYN-RELOCS:      CHERI Capability Relocations [
+# DYN-RELOCS-NEXT:   Section ({{.+}}) __cap_relocs {
+# DYN-RELOCS-NEXT:     0x[[#CAPSYM]] FUNC - 0x[[#START]] [0x[[#PCC_BASE]]-0x[[#%X,PCC_BASE+PCC_LENGTH]]]
+# DYN-RELOCS-NEXT:   }
+# DYN-RELOCS-NEXT: ]

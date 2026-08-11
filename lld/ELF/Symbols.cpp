@@ -257,6 +257,16 @@ uint64_t Symbol::getPltVA(Ctx &ctx) const {
   return outVA;
 }
 
+uint64_t Symbol::getTgotVA(Ctx &ctx) const {
+  // Like TLS symbols, the TGOT VA is the offset within the TGOT address space.
+  return ctx.in.tgot->getVA() + getTgotOffset(ctx) -
+         ctx.tgotPhdr->firstSec->addr;
+}
+
+uint64_t Symbol::getTgotOffset(Ctx &ctx) const {
+  return getTgotIdx(ctx) * ctx.target->gotEntrySize;
+}
+
 uint64_t Symbol::getMipsCheriCapTableVA(Ctx &ctx, const InputSectionBase *isec,
                                         uint64_t offset) const {
   return ctx.sym.mipsCheriCapabilityTable->getVA(ctx) +

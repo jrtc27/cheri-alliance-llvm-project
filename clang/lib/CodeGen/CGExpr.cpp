@@ -729,7 +729,7 @@ tightenCHERIBounds(CodeGenFunction &CGF, SubObjectBoundsKind Kind,
   StringRef KindStr = boundsKindStr(Kind);
   assert(!TBR.IsContainerSize && "not handled by this function");
   llvm::Type *BoundedTy = ValueToBound->getType();
-
+  assert(llvm::isCheriPointer(BoundedTy, &CGF.CGM.getDataLayout()));
   SourceLocation Loc = LocExpr->getExprLoc();
   SourceRange Range = LocExpr->getSourceRange();
   StringRef StatsPrefix;
@@ -832,8 +832,8 @@ static Address tightenCHERIBoundsForContainer(
 }
 
 LValue CodeGenFunction::emitLValueWithCheriSubobjectBounds(
-    const Expr *E, const Expr *OuterExpr, QualType Ty, SubObjectBoundsKind Kind,
-    const TightenBoundsResult &TBR) {
+    const Expr *E, const Expr *OuterExpr, KnownNonNull_t IsKnownNonNull,
+    QualType Ty, SubObjectBoundsKind Kind, const TightenBoundsResult &TBR) {
   assert(getTarget().SupportsCapabilities() &&
          "subobject bounds only work with CHERI");
   assert((Kind == SubObjectBoundsKind::Reference &&
@@ -846,7 +846,7 @@ LValue CodeGenFunction::emitLValueWithCheriSubobjectBounds(
   auto OldBoundsInfo = AddCheriContainerBoundsInfo;
   InCheriContainerBoundsEmission = TBR.IsContainerSize;
   AddCheriContainerBoundsInfo = {OuterExpr, &TBR, Ty, Kind, false};
-  LValue Result = EmitLValue(E);
+  LValue Result = EmitLValue(E, IsKnownNonNull);
   if (!TBR.IsContainerSize) {
     Address Unbounded = Result.getAddress();
     Result.setAddress(
@@ -888,16 +888,21 @@ LValue CodeGenFunction::emitLValueForReferenceBinding(const Expr *E) {
     } else {
       NumTightBoundsSetOnReferences++;
     }
-    return emitLValueWithCheriSubobjectBounds(E, E, Ty, Kind, *TBR);
+    return emitLValueWithCheriSubobjectBounds(E, E, NotKnownNonNull, Ty, Kind,
+                                              *TBR);
   }
   return EmitLValue(E);
 }
 
-llvm::Value *CodeGenFunction::emitAddrOf(const Expr *E, const Expr *OuterExpr) {
+// XXX: This should really be more integrated with EmitLValue rather than
+// having to find and update everywhere that needs subobject bounds.
+LValue CodeGenFunction::EmitLValueForAddrOf(const Expr *E,
+                                            const Expr *OuterExpr,
+                                            KnownNonNull_t IsKnownNonNull) {
   // If subobject bounds are disabled (or non-CHERI codegen) emit the address.
   if (getLangOpts().getCheriBounds() < LangOptions::CBM_SubObjectsSafe ||
       !OuterExpr->getType()->isCapabilityPointerType()) {
-    return EmitLValue(E).getPointer(*this);
+    return EmitLValue(E, IsKnownNonNull);
   }
   // CHERI_BOUNDS_DBG(<< "Trying to set CHERI bounds on addrof operator ";
   //                  E->dump(llvm::dbgs()));
@@ -912,10 +917,10 @@ llvm::Value *CodeGenFunction::emitAddrOf(const Expr *E, const Expr *OuterExpr) {
     } else {
       NumTightBoundsSetOnAddrOf++;
     }
-    return emitLValueWithCheriSubobjectBounds(E, OuterExpr, Ty, Kind, *TBR)
-        .getPointer(*this);
+    return emitLValueWithCheriSubobjectBounds(E, OuterExpr, IsKnownNonNull, Ty,
+                                              Kind, *TBR);
   }
-  return EmitLValue(E).getPointer(*this);
+  return EmitLValue(E, IsKnownNonNull);
 }
 
 Address
@@ -4960,7 +4965,8 @@ Address CodeGenFunction::EmitArrayToPointerDecay(const Expr *E,
   if (TBAAInfo) *TBAAInfo = CGM.getTBAAAccessInfo(EltType);
 
   Addr.withElementType(ConvertTypeForMem(EltType));
-  if (getLangOpts().getCheriBounds() >= LangOptions::CBM_SubObjectsSafe) {
+  if (getTarget().areAllPointersCapabilities() &&
+      getLangOpts().getCheriBounds() >= LangOptions::CBM_SubObjectsSafe) {
     auto BoundedResult = setCHERIBoundsOnArrayDecay(Addr, E);
     assert(BoundedResult.getType() == Addr.getType());
     Addr = BoundedResult;
@@ -4994,7 +5000,8 @@ emitArraySubscriptGEP(CodeGenFunction &CGF, Address Addr, ArrayRef<llvm::Value *
                                           CGF.AddCheriContainerBoundsInfo);
   }
   if (auto *ASE = dyn_cast<ArraySubscriptExpr>(E)) {
-    if (CGF.getLangOpts().getCheriBounds() >= LangOptions::CBM_SubObjectsSafe) {
+    if (llvm::isCheriPointer(Addr.getType(), &CGF.CGM.getDataLayout()) &&
+        CGF.getLangOpts().getCheriBounds() >= LangOptions::CBM_SubObjectsSafe) {
       // CSetBounds must be done before the GEP otherwise we set the base before
       // adding the index!
       auto BoundedResult = CGF.setCHERIBoundsOnArraySubscript(Addr, ASE);

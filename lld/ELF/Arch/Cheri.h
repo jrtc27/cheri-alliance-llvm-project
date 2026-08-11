@@ -82,13 +82,22 @@ public:
   bool isNeeded() const override { return !relocsMap.empty(); }
   size_t getSize() const override { return relocsMap.size() * entsize; }
   void writeTo(uint8_t *buf) override;
-  void addCapReloc(bool isCode, CheriCapRelocLocation loc,
-                   const SymbolAndOffset &target, int64_t capabilityOffset,
-                   Symbol *sourceSymbol = nullptr);
+  void addReloc(InputSectionBase &isec, uint64_t offsetInSec, Symbol &sym,
+                int64_t addend, RelExpr expr, RelType type) {
+    addReloc(isec, offsetInSec, &sym, addend, expr, type);
+  }
+  void addReloc(InputSectionBase &isec, uint64_t offsetInSec,
+                InputSectionBase &targetSec, int64_t addend, RelExpr expr,
+                RelType type) {
+    addReloc(isec, offsetInSec, &targetSec, addend, expr, type);
+  }
 
 private:
   template <class ELFT> void writeToImpl(uint8_t *);
-  bool addEntry(Ctx &ctx, CheriCapRelocLocation loc, CheriCapReloc relocation) {
+  void addReloc(InputSectionBase &isec, uint64_t offsetInSec,
+                llvm::PointerUnion<Symbol *, InputSectionBase *> symOrSec,
+                int64_t addend, RelExpr expr, RelType type);
+  bool addEntry(CheriCapRelocLocation loc, CheriCapReloc relocation) {
     auto it = relocsMap.insert(std::make_pair(loc, relocation));
     // assert(it.first->second == Relocation);
     if (!(it.first->second == relocation)) {
@@ -311,13 +320,16 @@ inline void readOnlyCapRelocsError(Ctx &ctx, Symbol &sym, const Twine &sourceMsg
         sourceMsg);
 }
 
-void addRelativeCapabilityRelocation(
-    Ctx &ctx, InputSectionBase &isec, uint64_t offsetInSec,
-    llvm::PointerUnion<Symbol *, InputSectionBase *> symOrSec, int64_t addend,
-    RelExpr expr, RelType type);
-
 uint64_t getCapMetaBits(Ctx &ctx, int64_t a, const Symbol &sym,
                         const InputSectionBase *isec, uint64_t offset);
+
+bool needsCheriPccSegment(Ctx &ctx);
+
+// Align OutputSections as needed to ensure the bounds of capabilities
+// such as PCC do not permit undesired access to portions of other
+// OutputSections.  Return true if the alignment of any OutputSection
+// was modified.
+bool cheriCapabilityBoundsAlign(Ctx &ctx);
 } // namespace elf
 } // namespace lld
 
