@@ -154,8 +154,9 @@ void riscv::getRISCVTargetFeatures(const Driver &D, const llvm::Triple &Triple,
   RESERVE_REG(x31)
 #undef RESERVE_REG
 
-  bool IsCheri =
-      ISAInfo->hasExtension("xcheri") || ISAInfo->hasExtension("zcheripurecap");
+  bool IsCheri = ISAInfo->hasExtension("xcheri") ||
+                 ISAInfo->hasExtension("y") ||
+                 ISAInfo->hasExtension("zcheripurecap");
 
   // -mrelax is default, unless -mno-relax is specified.
   // For CHERI it's currently not supported, so forbid enabling it and disable

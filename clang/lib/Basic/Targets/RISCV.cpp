@@ -258,7 +258,7 @@ void RISCVTargetInfo::getTargetDefines(const LangOptions &Opts,
     }
 
     // Macros for use with the set and get permissions builtins for bakewell.
-    if (ISAInfo->hasExtension("zcheripurecap")) {
+    if (ISAInfo->hasExtension("y") || ISAInfo->hasExtension("zcheripurecap")) {
       Builder.defineMacro("__CHERI_CAP_PERMISSION_WRITE__", Twine(1 << 0));
       Builder.defineMacro("__CHERI_CAP_PERMISSION_LOAD_MUTABLE__", Twine(1 << 1));
       Builder.defineMacro("__CHERI_CAP_PERMISSION_CAPABILITY__",
@@ -267,7 +267,8 @@ void RISCVTargetInfo::getTargetDefines(const LangOptions &Opts,
                           Twine(1 << 16));
       Builder.defineMacro("__CHERI_CAP_PERMISSION_EXECUTE__", Twine(1 << 17));
       Builder.defineMacro("__CHERI_CAP_PERMISSION_READ__", Twine(1 << 18));
-      if(ISAInfo->hasExtension("zcherilevels")){
+      if (ISAInfo->hasExtension("zylevels1b") ||
+          ISAInfo->hasExtension("zcherilevels")) {
         Builder.defineMacro("__CHERI_CAP_PERMISSION_ELEVATE_LEVEL__",
                             Twine(1 << 2));
         Builder.defineMacro("__CHERI_CAP_PERMISSION_STORE_LEVEL__",
@@ -449,7 +450,9 @@ bool RISCVTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
   } else {
     ISAInfo = std::move(*ParseResult);
   }
-  if (ISAInfo->hasExtension("xcheri") ||
+  if (ISAInfo->hasExtension("xcheri") || ISAInfo->hasExtension("y") ||
+      ISAInfo->hasExtension("zyhybrid") ||
+      ISAInfo->hasExtension("zylevels1b") ||
       ISAInfo->hasExtension("zcheripurecap") ||
       ISAInfo->hasExtension("zcherihybrid") ||
       ISAInfo->hasExtension("zcheripte") ||
