@@ -1043,7 +1043,7 @@ def : InstAlias<"sy $rs2, (${rs1})",
                 (CSC_128  YGPR:$rs2, YGPR:$rs1, 0), 0>;
 }
 
-let Predicates = [HasYOrZCheriPurecapOrCheri, IsCapMode] in {
+let Predicates = [HasZCheriPurecapOrCheri, IsCapMode] in {
 defm : CoercingLoadAlias<"lb", CLB, GPR>;
 defm : CoercingLoadAlias<"lh", CLH, GPR>;
 defm : CoercingLoadAlias<"lw", CLW, GPR>;
