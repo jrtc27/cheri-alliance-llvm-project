@@ -491,7 +491,7 @@ RISCVISAInfo::parseNormalizedArchString(StringRef Arch) {
   else if (Arch.consume_front("rv64"))
     XLen = 64;
 
-  if (XLen == 0 || Arch.empty() || (Arch[0] != 'i' && Arch[0] != 'e'))
+  if (XLen == 0 || Arch.empty() || (Arch[0] != 'i' && Arch[0] != 'e' && Arch[0] != 'y'))
     return getError("arch string must begin with valid base ISA");
 
   std::unique_ptr<RISCVISAInfo> ISAInfo(new RISCVISAInfo(XLen));
@@ -548,6 +548,14 @@ RISCVISAInfo::parseNormalizedArchString(StringRef Arch) {
                  RISCVISAUtils::ExtensionVersion{MajorVersion, MinorVersion})
              .second)
       return getError("duplicate extension '" + ExtName + "'");
+  }
+  if (ISAInfo->Exts.count("y")) {
+    for (const auto &Base : {"i", "e"})
+      if (ISAInfo->Exts.count(Base))
+        return getError("conflicting base ISAs 'y' and '" + Twine(Base) + "'");
+    auto IVersion = findDefaultVersion("i");
+    assert(IVersion && "Default 'i' extension version not found?");
+    ISAInfo->Exts["i"] = {IVersion->Major, IVersion->Minor};
   }
   ISAInfo->updateImpliedLengths();
   return std::move(ISAInfo);
@@ -963,9 +971,18 @@ std::string RISCVISAInfo::toString() const {
 
   Arch << "rv" << XLen;
 
+  bool HasY = Exts.count("y") != 0;
+
   ListSeparator LS("_");
   for (auto const &Ext : Exts) {
     StringRef ExtName = Ext.first;
+    if (HasY) {
+      // Internally Y is represented by I+Y, and the E equivalent is not yet
+      // supported so should never be parseable.
+      if (ExtName == "i")
+        continue;
+      assert(ExtName != "e");
+    }
     auto ExtInfo = Ext.second;
     Arch << LS << ExtName;
     Arch << ExtInfo.Major << "p" << ExtInfo.Minor;
