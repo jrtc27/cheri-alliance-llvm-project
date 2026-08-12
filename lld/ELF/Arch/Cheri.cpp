@@ -96,7 +96,7 @@ bool isCheriAbi(Ctx &ctx, const InputFile &f) {
   case EM_MIPS:
     return (f.eflags & EF_MIPS_ABI) == EF_MIPS_ABI_CHERIABI;
   case EM_RISCV:
-    return f.eflags & EF_RISCV_CHERIABI;
+    return f.eflags & (EF_RISCV_CHERIABI | EF_RISCV_RVY);
   default:
     return false;
   }

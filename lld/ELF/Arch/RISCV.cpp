@@ -49,6 +49,9 @@ public:
   void relocateAlloc(InputSectionBase &sec, uint8_t *buf) const override;
   bool relaxOnce(int pass) const override;
   void finalizeRelax(int passes) const override;
+
+private:
+  bool isY;
 };
 
 } // end anonymous namespace
@@ -77,6 +80,9 @@ enum Op {
 
   CADDI = 0x201B,
   CLC = 0x400F,
+
+  YADDI = 0x407B,
+  LY = 0x107B,
 };
 
 enum Reg {
@@ -159,6 +165,13 @@ RISCV::RISCV(Ctx &ctx) : TargetInfo(ctx) {
   ipltEntrySize = 16;
   if (ctx.arg.isCheriAbi)
     gotEntrySize = getCapabilitySize();
+
+  for (auto &f : ctx.objectFiles) {
+    if (f->ekind == ELFNoneKind)
+      continue;
+    isY = f->eflags & EF_RISCV_RVY;
+    break;
+  }
 }
 
 static uint32_t getEFlags(Ctx &ctx, InputFile *f) {
@@ -205,6 +218,9 @@ uint32_t RISCV::calcEFlags() const {
 
     if ((eflags & EF_RISCV_RVE) != (target & EF_RISCV_RVE))
       Err(ctx) << f << ": cannot link object files with different EF_RISCV_RVE";
+
+    if ((eflags & EF_RISCV_RVY) != (target & EF_RISCV_RVY))
+      Err(ctx) << f << ": cannot link object files with different EF_RISCV_RVY";
 
     if ((eflags & EF_RISCV_CHERIABI) != (target & EF_RISCV_CHERIABI))
       Err(ctx) << f << ": cannot link object files with different EF_RISCV_CHERIABI";
@@ -284,10 +300,14 @@ void RISCV::writePltHeader(uint8_t *buf) const {
   uint32_t offset = ctx.in.gotPlt->getVA() - ctx.in.plt->getVA();
   uint32_t ptrload =
       ctx.arg.isCheriAbi
-          ? (!ctx.arg.zCheriRiscvV9 ? CLC : (ctx.arg.is64 ? CLC_128 : CLC_64))
+          ? (isY                      ? LY
+             : !ctx.arg.zCheriRiscvV9 ? CLC
+                                      : (ctx.arg.is64 ? CLC_128 : CLC_64))
           : (ctx.arg.is64 ? LD : LW);
   uint32_t ptraddi = ctx.arg.isCheriAbi
-                         ? (ctx.arg.zCheriRiscvV9 ? CIncOffsetImm : CADDI)
+                         ? (isY                     ? YADDI
+                            : ctx.arg.zCheriRiscvV9 ? CIncOffsetImm
+                                                    : CADDI)
                          : ADDI;
   // Shift is log2(pltsize / ptrsize), which is 0 for CHERI-128 so skipped
   uint32_t shift = 2 - ctx.arg.is64 - ctx.arg.isCheriAbi;
@@ -314,7 +334,9 @@ void RISCV::writePlt(uint8_t *buf, const Symbol &sym,
   // nop
   uint32_t ptrload =
       ctx.arg.isCheriAbi
-          ? (!ctx.arg.zCheriRiscvV9 ? CLC : (ctx.arg.is64 ? CLC_128 : CLC_64))
+          ? (isY                      ? LY
+             : !ctx.arg.zCheriRiscvV9 ? CLC
+                                      : (ctx.arg.is64 ? CLC_128 : CLC_64))
           : (ctx.arg.is64 ? LD : LW);
   uint32_t entryva = sym.getGotPltVA(ctx);
   uint32_t offset = entryva - pltEntryAddr;
