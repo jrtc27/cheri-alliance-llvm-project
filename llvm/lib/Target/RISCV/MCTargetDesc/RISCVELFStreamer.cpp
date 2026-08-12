@@ -97,7 +97,7 @@ void RISCVTargetELFStreamer::finish() {
   if (hasTSO())
     EFlags |= ELF::EF_RISCV_TSO;
 
-  if (isCapMode())
+  if (isCapMode() && !hasRVY())
     EFlags |= ELF::EF_RISCV_CAP_MODE;
 
   switch (ABI) {
@@ -106,7 +106,10 @@ void RISCVTargetELFStreamer::finish() {
     break;
   case RISCVABI::ABI_IL32PC64:
   case RISCVABI::ABI_L64PC128:
-    EFlags |= ELF::EF_RISCV_CHERIABI;
+    if (hasRVY())
+      EFlags |= ELF::EF_RISCV_RVY;
+    else
+      EFlags |= ELF::EF_RISCV_CHERIABI;
     break;
   case RISCVABI::ABI_ILP32F:
   case RISCVABI::ABI_LP64F:
@@ -115,7 +118,10 @@ void RISCVTargetELFStreamer::finish() {
   case RISCVABI::ABI_IL32PC64F:
   case RISCVABI::ABI_L64PC128F:
     EFlags |= ELF::EF_RISCV_FLOAT_ABI_SINGLE;
-    EFlags |= ELF::EF_RISCV_CHERIABI;
+    if (hasRVY())
+      EFlags |= ELF::EF_RISCV_RVY;
+    else
+      EFlags |= ELF::EF_RISCV_CHERIABI;
     break;
   case RISCVABI::ABI_ILP32D:
   case RISCVABI::ABI_LP64D:
@@ -124,7 +130,10 @@ void RISCVTargetELFStreamer::finish() {
   case RISCVABI::ABI_IL32PC64D:
   case RISCVABI::ABI_L64PC128D:
     EFlags |= ELF::EF_RISCV_FLOAT_ABI_DOUBLE;
-    EFlags |= ELF::EF_RISCV_CHERIABI;
+    if (hasRVY())
+      EFlags |= ELF::EF_RISCV_RVY;
+    else
+      EFlags |= ELF::EF_RISCV_CHERIABI;
     break;
   case RISCVABI::ABI_ILP32E:
   case RISCVABI::ABI_LP64E:
@@ -132,7 +141,10 @@ void RISCVTargetELFStreamer::finish() {
     break;
   case RISCVABI::ABI_IL32PC64E:
     EFlags |= ELF::EF_RISCV_RVE;
-    EFlags |= ELF::EF_RISCV_CHERIABI;
+    if (hasRVY())
+      EFlags |= ELF::EF_RISCV_RVY;
+    else
+      EFlags |= ELF::EF_RISCV_CHERIABI;
     break;
   case RISCVABI::ABI_Unknown:
     llvm_unreachable("Improperly initialised target ABI");
@@ -195,7 +207,8 @@ void RISCVELFStreamer::changeSection(MCSection *Section, uint32_t Subsection) {
 
 void RISCVELFStreamer::emitInstruction(const MCInst &Inst,
                                        const MCSubtargetInfo &STI) {
-  if (STI.hasFeature(RISCV::FeatureStdExtZCheriPureCap)) {
+  if (STI.hasFeature(RISCV::FeatureStdExtY) ||
+      STI.hasFeature(RISCV::FeatureStdExtZCheriPureCap)) {
     if (STI.hasFeature(RISCV::FeatureCapMode))
       emitCapModeMappingSymbol();
     else

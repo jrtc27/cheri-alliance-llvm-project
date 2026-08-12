@@ -2180,6 +2180,8 @@ include "RISCVInstrInfoZicond.td"
 include "RISCVInstrInfoZicfiss.td"
 
 // CHERI
+include "RISCVInstrInfoXCheri.td"
+include "RISCVInstrInfoZCheriPurecap.td"
 include "RISCVInstrInfoY.td"
 
 //===----------------------------------------------------------------------===//
@@ -2194,13 +2196,6 @@ include "RISCVInstrInfoXCV.td"
 include "RISCVInstrInfoXwch.td"
 include "RISCVInstrInfoXqci.td"
 include "RISCVInstrInfoXMips.td"
-
-//===----------------------------------------------------------------------===//
-// Non-standard Extensions
-//===----------------------------------------------------------------------===//
-
-include "RISCVInstrInfoXCheri.td"
-include "RISCVInstrInfoZCheriPurecap.td"
 
 //===----------------------------------------------------------------------===//
 // Global ISel

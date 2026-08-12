@@ -1693,6 +1693,7 @@ unsigned RISCVAsmParser::validateTargetOperandClass(MCParsedAsmOperand &AsmOp,
     CoerceInAllModes = true;
     break;
   case MCK_RVYCompatGPCRNoC0:
+  case MCK_YGPRNoX0ZeroOffsetMemOpOperand:
     RC = &RISCVMCRegisterClasses[RISCV::GPCRNoC0RegClassID];
     break;
   case MCK_YGPRC:
@@ -4323,11 +4324,14 @@ void RISCVAsmParser::emitCapLoadLocalCap(MCInst &Inst, SMLoc IDLoc,
   //             CINCOFFSET cdest, cdest, %pcrel_lo(TmpLabel)
   MCOperand DestReg = Inst.getOperand(0);
   const MCExpr *Symbol = Inst.getOperand(1).getExpr();
+  const bool HasY = STI->hasFeature(RISCV::FeatureStdExtY);
   const bool HasZCheriPurecap =
       STI->hasFeature(RISCV::FeatureStdExtZCheriPureCap);
+  unsigned SecondOpcode = HasY               ? RISCV::YADDI
+                          : HasZCheriPurecap ? RISCV::CADDI
+                                             : RISCV::CIncOffsetImm;
   emitAuipccInstPair(DestReg, DestReg, Symbol, RISCVMCExpr::VK_RISCV_PCREL_HI,
-                     HasZCheriPurecap ? RISCV::CADDI : RISCV::CIncOffsetImm,
-                     IDLoc, Out);
+                     SecondOpcode, IDLoc, Out);
 }
 
 void RISCVAsmParser::emitCapLoadGlobalCap(MCInst &Inst, SMLoc IDLoc,
@@ -4342,7 +4346,9 @@ void RISCVAsmParser::emitCapLoadGlobalCap(MCInst &Inst, SMLoc IDLoc,
   const MCExpr *Symbol = Inst.getOperand(1).getExpr();
   const bool HasZCheriPurecap =
       STI->hasFeature(RISCV::FeatureStdExtZCheriPureCap);
-  unsigned SecondOpcode = HasZCheriPurecap
+  const bool HasY = STI->hasFeature(RISCV::FeatureStdExtY);
+  unsigned SecondOpcode = HasY ? RISCV::CLY
+                          : HasZCheriPurecap
                               ? RISCV::CLC
                               : (isRV64() ? RISCV::CLC_128 : RISCV::CLC_64);
   emitAuipccInstPair(DestReg, DestReg, Symbol, RISCVMCExpr::VK_RISCV_GOT_HI,
@@ -4384,10 +4390,13 @@ void RISCVAsmParser::emitCapLoadTLSGDCap(MCInst &Inst, SMLoc IDLoc,
     VKHi = RISCVMCExpr::VK_RISCV_TLS_TGOT_GD_HI;
   else
     VKHi = RISCVMCExpr::VK_RISCV_TLS_GD_HI;
+  const bool HasY = STI->hasFeature(RISCV::FeatureStdExtY);
   const bool HasZCheriPurecap =
       STI->hasFeature(RISCV::FeatureStdExtZCheriPureCap);
-  const unsigned IncOpc = HasZCheriPurecap ? RISCV::CADDI : RISCV::CIncOffsetImm;
-  emitAuipccInstPair(DestReg, DestReg, Symbol, VKHi, IncOpc, IDLoc, Out);
+  unsigned SecondOpcode = HasY               ? RISCV::YADDI
+                          : HasZCheriPurecap ? RISCV::CADDI
+                                             : RISCV::CIncOffsetImm;
+  emitAuipccInstPair(DestReg, DestReg, Symbol, VKHi, SecondOpcode, IDLoc, Out);
 }
 
 bool RISCVAsmParser::checkPseudoCIncOffsetTPRel(MCInst &Inst,

@@ -67,16 +67,16 @@ RISCVRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
     return CSR_NoRegs_SaveList;
   if (MF->getFunction().hasFnAttribute("interrupt")) {
     if (Subtarget.hasStdExtD())
-      return Subtarget.hasStdExtZCheriPureCapOrCheri()
+      return Subtarget.hasStdExtYOrZCheriPureCapOrCheri()
                  ? CSR_XLEN_CLEN_F64_Interrupt_SaveList
                  : CSR_XLEN_F64_Interrupt_SaveList;
     if (Subtarget.hasStdExtF()) {
-      if (Subtarget.hasStdExtZCheriPureCapOrCheri())
+      if (Subtarget.hasStdExtYOrZCheriPureCapOrCheri())
         return CSR_XLEN_CLEN_F32_Interrupt_SaveList;
       return Subtarget.hasStdExtE() ? CSR_XLEN_F32_Interrupt_RVE_SaveList
                                : CSR_XLEN_F32_Interrupt_SaveList;
     }
-    if (Subtarget.hasStdExtZCheriPureCapOrCheri())
+    if (Subtarget.hasStdExtYOrZCheriPureCapOrCheri())
       return CSR_XLEN_CLEN_Interrupt_SaveList;
     return Subtarget.hasStdExtE() ? CSR_Interrupt_RVE_SaveList
                              : CSR_Interrupt_SaveList;
@@ -238,11 +238,16 @@ void RISCVRegisterInfo::adjustReg(MachineBasicBlock &MBB,
   unsigned Opc;
   unsigned OpcImm;
   const bool IsPureCapABI = RISCVABI::isCheriPureCapABI(ST.getTargetABI());
+  const bool HasY = ST.hasFeature(RISCV::FeatureStdExtY);
   const bool HasZCheriPurecap =
       ST.hasFeature(RISCV::FeatureStdExtZCheriPureCap);
   if (IsPureCapABI) {
-    Opc = HasZCheriPurecap ? RISCV::CADD : RISCV::CIncOffset;
-    OpcImm = HasZCheriPurecap ? RISCV::CADDI : RISCV::CIncOffsetImm;
+    Opc = HasY               ? RISCV::YADD
+          : HasZCheriPurecap ? RISCV::CADD
+                             : RISCV::CIncOffset;
+    OpcImm = HasY               ? RISCV::YADDI
+             : HasZCheriPurecap ? RISCV::CADDI
+                                : RISCV::CIncOffsetImm;
   } else {
     Opc = RISCV::ADD;
     OpcImm = RISCV::ADDI;
@@ -726,10 +731,13 @@ Register RISCVRegisterInfo::materializeFrameBaseRegister(MachineBasicBlock *MBB,
 
   unsigned Opc;
   Register BaseReg;
+  const bool HasY = ST.hasFeature(RISCV::FeatureStdExtY);
   const bool HasZCheriPurecap =
       ST.hasFeature(RISCV::FeatureStdExtZCheriPureCap);
   if (RISCVABI::isCheriPureCapABI(ST.getTargetABI())) {
-    Opc = HasZCheriPurecap ? RISCV::CADDI : RISCV::CIncOffsetImm;
+    Opc = HasY               ? RISCV::YADDI
+          : HasZCheriPurecap ? RISCV::CADDI
+                             : RISCV::CIncOffsetImm;
     BaseReg = MFI.createVirtualRegister(&RISCV::GPCRRegClass);
   } else {
     Opc = RISCV::ADDI;

@@ -153,16 +153,18 @@ static void emitSCSPrologue(MachineFunction &MF, MachineBasicBlock &MBB,
   // (c)addi    (c)gp, (c)gp, [4|8|16]
   // s[w|d|c]   (c)ra, -[4|8|16](cgp)
   unsigned IncrInstr =
-      IsPureCapABI
-          ? (STI.hasStdExtZCheriPureCap() ? RISCV::CADDI : RISCV::CIncOffsetImm)
-          : RISCV::ADDI;
+      IsPureCapABI ? (STI.hasStdExtY()               ? RISCV::YADDI
+                      : STI.hasStdExtZCheriPureCap() ? RISCV::CADDI
+                                                     : RISCV::CIncOffsetImm)
+                   : RISCV::ADDI;
   BuildMI(MBB, MI, DL, TII->get(IncrInstr))
       .addReg(SCSPReg, RegState::Define)
       .addReg(SCSPReg)
       .addImm(SlotSize)
       .setMIFlag(MachineInstr::FrameSetup);
   unsigned StoreInstr = IsPureCapABI
-                            ? (STI.hasStdExtZCheriPureCap()
+                            ? (STI.hasStdExtY() ? RISCV::CSY
+                               : STI.hasStdExtZCheriPureCap()
                                    ? RISCV::CSC
                                    : (IsRV64 ? RISCV::CSC_128 : RISCV::CSC_64))
                             : (IsRV64 ? RISCV::SD : RISCV::SW);
@@ -222,6 +224,7 @@ static void emitSCSEpilogue(MachineFunction &MF, MachineBasicBlock &MBB,
 
   bool IsRV64 = STI.is64Bit();
   bool IsPureCapABI = RISCVABI::isCheriPureCapABI(STI.getTargetABI());
+  bool HasY = STI.hasFeature(RISCV::FeatureStdExtY);
   bool HasZCheriPurecap = STI.hasFeature(RISCV::FeatureStdExtZCheriPureCap);
   MVT PtrVT = IsPureCapABI ? STI.typeForCapabilities() : STI.getXLenVT();
   int64_t SlotSize = PtrVT.getFixedSizeInBits() / 8;
@@ -230,17 +233,20 @@ static void emitSCSEpilogue(MachineFunction &MF, MachineBasicBlock &MBB,
   // (c)addi   (c)gp, (c)gp, -[4|8|16]
   unsigned LoadInstr =
       IsPureCapABI
-          ? (HasZCheriPurecap ? RISCV::CLC
-                             : (IsRV64 ? RISCV::CLC_128 : RISCV::CLC_64))
+          ? (HasY               ? RISCV::CLY
+             : HasZCheriPurecap ? RISCV::CLC
+                                : (IsRV64 ? RISCV::CLC_128 : RISCV::CLC_64))
           : (IsRV64 ? RISCV::LD : RISCV::LW);
   BuildMI(MBB, MI, DL, TII->get(LoadInstr))
       .addReg(RAReg, RegState::Define)
       .addReg(SCSPReg)
       .addImm(-SlotSize)
       .setMIFlag(MachineInstr::FrameDestroy);
-  unsigned IncrInstr =
-      IsPureCapABI ? (HasZCheriPurecap ? RISCV::CADDI : RISCV::CIncOffsetImm)
-                   : RISCV::ADDI;
+  unsigned IncrInstr = IsPureCapABI
+                           ? (HasY               ? RISCV::YADDI
+                              : HasZCheriPurecap ? RISCV::CADDI
+                                                 : RISCV::CIncOffsetImm)
+                           : RISCV::ADDI;
   BuildMI(MBB, MI, DL, TII->get(IncrInstr))
       .addReg(SCSPReg, RegState::Define)
       .addReg(SCSPReg)
@@ -1062,10 +1068,15 @@ void RISCVFrameLowering::emitPrologue(MachineFunction &MF,
             .setMIFlag(MachineInstr::FrameSetup);
       }
 
-      const bool IsStdCheri = STI.hasFeature(RISCV::FeatureStdExtZCheriPureCap);
+      const bool HasY = STI.hasFeature(RISCV::FeatureStdExtY);
+      const bool HasZCheriPurecap =
+          STI.hasFeature(RISCV::FeatureStdExtZCheriPureCap);
       if (RISCVABI::isCheriPureCapABI(STI.getTargetABI()))
         BuildMI(MBB, MBBI, DL,
-                TII->get(IsStdCheri ? RISCV::SCADDR : RISCV::CSetAddr), SPReg)
+                TII->get(HasY               ? RISCV::YADDRW
+                         : HasZCheriPurecap ? RISCV::SCADDR
+                                            : RISCV::CSetAddr),
+                SPReg)
             .addReg(SPReg)
             .addReg(SPAddrDstReg);
 

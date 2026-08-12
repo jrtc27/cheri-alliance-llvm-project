@@ -182,6 +182,12 @@ public:
            hasShortForwardBranchOpt();
   }
 
+  bool hasStdExtYOrZCheriPureCap() const {
+    return HasStdExtY || HasStdExtZCheriPureCap;
+  }
+  bool hasStdExtYOrZCheriPureCapOrCheri() const {
+    return HasStdExtY || HasStdExtZCheriPureCap || HasCheri;
+  }
   bool hasStdExtZCheriPureCapOrCheri() const {
     return HasStdExtZCheriPureCap || HasCheri;
   }
@@ -247,7 +253,8 @@ public:
     return UserReservedRegister[i];
   }
   MVT typeForCapabilities() const {
-    assert(hasStdExtZCheriPureCapOrCheri() && "Cannot get capability type for non-CHERI");
+    assert(hasStdExtYOrZCheriPureCapOrCheri() &&
+           "Cannot get capability type for non-CHERI");
     return is64Bit() ? MVT::c128 : MVT::c64;
   }
 

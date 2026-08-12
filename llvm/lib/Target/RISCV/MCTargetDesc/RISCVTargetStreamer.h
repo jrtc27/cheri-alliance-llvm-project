@@ -34,6 +34,7 @@ struct RISCVOptionArchArg {
 class RISCVTargetStreamer : public MCTargetStreamer {
   RISCVABI::ABI TargetABI = RISCVABI::ABI_Unknown;
   bool HasRVC = false;
+  bool HasRVY = false;
   bool HasTSO = false;
   bool IsCapMode = false;
 
@@ -66,6 +67,7 @@ public:
   RISCVABI::ABI getTargetABI() const { return TargetABI; }
   void setFlagsFromFeatures(const MCSubtargetInfo &STI);
   bool hasRVC() const { return HasRVC; }
+  bool hasRVY() const { return HasRVY; }
   bool hasTSO() const { return HasTSO; }
   bool isCapMode() const { return IsCapMode; }
 };

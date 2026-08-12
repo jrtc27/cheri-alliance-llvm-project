@@ -190,10 +190,12 @@ RISCVELFTargetObjectFile::getTailPaddingForPreciseBounds(
     return TailPaddingAmount::None;
 
   const RISCVTargetMachine &RTM = static_cast<const RISCVTargetMachine &>(TM);
-  const bool IsStdCheriRISCV = getContext().getSubtargetInfo()->hasFeature(
+  const bool HasY =
+      getContext().getSubtargetInfo()->hasFeature(RISCV::FeatureStdExtY);
+  const bool HasZCheriPurecap = getContext().getSubtargetInfo()->hasFeature(
       RISCV::FeatureStdExtZCheriPureCap);
   return RISCVCompressedCap::getRequiredTailPadding(Size, RTM.IsRV64(),
-                                                    IsStdCheriRISCV);
+                                                    HasY || HasZCheriPurecap);
 }
 
 Align
@@ -203,10 +205,12 @@ RISCVELFTargetObjectFile::getAlignmentForPreciseBounds(
     return Align();
 
   const RISCVTargetMachine &RTM = static_cast<const RISCVTargetMachine &>(TM);
-  const bool IsStdCheriRISCV = getContext().getSubtargetInfo()->hasFeature(
+  const bool HasY =
+      getContext().getSubtargetInfo()->hasFeature(RISCV::FeatureStdExtY);
+  const bool HasZCheriPurecap = getContext().getSubtargetInfo()->hasFeature(
       RISCV::FeatureStdExtZCheriPureCap);
   return RISCVCompressedCap::getRequiredAlignment(Size, RTM.IsRV64(),
-                                                  IsStdCheriRISCV);
+                                                  HasY || HasZCheriPurecap);
 }
 
 int RISCVELFTargetObjectFile::getCheriCapabilitySize(

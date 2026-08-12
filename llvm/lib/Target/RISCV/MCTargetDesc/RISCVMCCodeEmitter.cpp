@@ -298,14 +298,16 @@ void RISCVMCCodeEmitter::expandCIncOffsetTPRel(
         0, Dummy, MCFixupKind(RISCV::fixup_riscv_relax), MI.getLoc()));
   }
 
+  const bool HasY = STI.hasFeature(RISCV::FeatureStdExtY);
   const bool HasZCheriPurecap =
       STI.hasFeature(RISCV::FeatureStdExtZCheriPureCap);
   // Emit a normal CIncOffset instruction with the given operands.
+  unsigned Opcode = HasY               ? RISCV::YADD
+                    : HasZCheriPurecap ? RISCV::CADD
+                                       : RISCV::CIncOffset;
   MCInst TmpInst =
-      MCInstBuilder(HasZCheriPurecap ? RISCV::CADD : RISCV::CIncOffset)
-          .addOperand(DestReg)
-          .addOperand(TPReg)
-          .addOperand(SrcReg);
+      MCInstBuilder(Opcode).addOperand(DestReg).addOperand(TPReg).addOperand(
+          SrcReg);
   uint32_t Binary = getBinaryCodeForInstr(TmpInst, Fixups, STI);
   support::endian::write(CB, Binary, llvm::endianness::little);
 }

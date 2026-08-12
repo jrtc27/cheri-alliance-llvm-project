@@ -1038,6 +1038,11 @@ def : CompressPat<(JALR X0, GPRNoX0:$rs1, 0),
                   (C_JR GPRNoX0:$rs1)>;
 } // Predicates = [HasStdExtC, NotCapMode]
 
+def NotHasYAndCapMode
+    : Predicate<"!(Subtarget->hasY() && Subtarget->hasCapMode())">,
+      AssemblerPredicate<(any_of (not FeatureStdExtY), (not FeatureCapMode)),
+                         "NotHasYAndCapMode">;
+
 def NotHasZCheriPurecapAndCapMode
     : Predicate<"!(Subtarget->hasZCheriPurecap() && Subtarget->hasCapMode())">,
       AssemblerPredicate<
@@ -1047,7 +1052,7 @@ def NotHasZCheriPurecapAndCapMode
 let Predicates = [HasStdExtCOrZca] in {
 // `c.mv` in capmode is uncompressed to a capability move so we can't compress
 // an integer move to this instruction in this case.
-let Predicates = [HasStdExtCOrZca, NotHasZCheriPurecapAndCapMode] in {
+let Predicates = [HasStdExtCOrZca, NotHasYAndCapMode, NotHasZCheriPurecapAndCapMode] in {
 let isCompressOnly = true in {
 def : CompressPat<(ADD GPRNoX0:$rs1, X0, GPRNoX0:$rs2),
                   (C_MV GPRNoX0:$rs1, GPRNoX0:$rs2)>;
@@ -1056,7 +1061,7 @@ def : CompressPat<(ADD GPRNoX0:$rs1, GPRNoX0:$rs2, X0),
 }
 def : CompressPat<(ADDI GPRNoX0:$rs1, GPRNoX0:$rs2, 0),
                   (C_MV GPRNoX0:$rs1, GPRNoX0:$rs2)>;
-} // HasStdExtC, NotHasZCheriPurecapAndCapMode
+} // HasStdExtC, NotHasYAndCapMode, NotHasZCheriPurecapAndCapMode
 def : CompressPat<(EBREAK), (C_EBREAK)>;
 def : CompressPat<(UNIMP), (C_UNIMP)>;
 } // Predicates = [HasStdExtCOrZca]

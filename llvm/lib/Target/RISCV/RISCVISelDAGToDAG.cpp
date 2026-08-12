@@ -2789,11 +2789,14 @@ bool RISCVDAGToDAGISel::SelectRegImmCommon(SDValue Addr, SDValue &Base,
     // This mirrors the AddiPair PatFrag in RISCVInstrInfo.td.
     if (CVal >= -4096 && CVal <= (4094 - RV32ZdinxRange)) {
       int64_t Adj = CVal < 0 ? -2048 : 2047;
+      const bool HasY = Subtarget->hasFeature(RISCV::FeatureStdExtY);
       const bool HasZCheriPureCap =
           Subtarget->hasFeature(RISCV::FeatureStdExtZCheriPureCap);
       unsigned Opc;
       if (PtrVT.isFatPointer())
-        Opc = HasZCheriPureCap ? RISCV::CADDI : RISCV::CIncOffsetImm;
+        Opc = HasY               ? RISCV::YADDI
+              : HasZCheriPureCap ? RISCV::CADDI
+                                 : RISCV::CIncOffsetImm;
       else
         Opc = RISCV::ADDI;
       Base = SDValue(

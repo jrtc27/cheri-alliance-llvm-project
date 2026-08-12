@@ -504,10 +504,14 @@ void RISCVInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     return;
   } else if (RISCV::GPCRRegClass.contains(DstReg)) {
     // GPCR -> GPCR can use CMove
+    const bool HasY = Subtarget.hasFeature(RISCV::FeatureStdExtY);
     const bool HasZCheriPureCap =
         Subtarget.hasFeature(RISCV::FeatureStdExtZCheriPureCap);
     if (RISCV::GPCRRegClass.contains(SrcReg)) {
-      BuildMI(MBB, MBBI, DL, get(HasZCheriPureCap ? RISCV::CMV : RISCV::CMove),
+      BuildMI(MBB, MBBI, DL,
+              get(HasY               ? RISCV::YMV
+                  : HasZCheriPureCap ? RISCV::CMV
+                                     : RISCV::CMove),
               DstReg)
           .addReg(SrcReg, getKillRegState(KillSrc))
           .setMIFlag(Flag);
@@ -656,7 +660,8 @@ void RISCVInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
                                                                : RISCV::CSD;
       IsScalableVector = false;
     } else if (RISCV::GPCRRegClass.hasSubClassEq(RC)) {
-      Opcode = ST.hasStdExtZCheriPureCap()
+      Opcode = ST.hasStdExtY() ? RISCV::CSY
+               : ST.hasStdExtZCheriPureCap()
                    ? RISCV::CSC
                    : (ST.isRV64() ? RISCV::CSC_128 : RISCV::CSC_64);
       IsScalableVector = false;
@@ -675,7 +680,8 @@ void RISCVInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
                RISCV::SW : RISCV::SD;
       IsScalableVector = false;
     } else if (RISCV::GPCRRegClass.hasSubClassEq(RC)) {
-      Opcode = ST.hasStdExtZCheriPureCap()
+      Opcode = ST.hasStdExtY() ? RISCV::CSY
+               : ST.hasStdExtZCheriPureCap()
                    ? RISCV::SC
                    : (ST.isRV64() ? RISCV::SC_128 : RISCV::SC_64);
       IsScalableVector = false;
@@ -777,7 +783,8 @@ void RISCVInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
                                                                : RISCV::CLD;
       IsScalableVector = false;
     } else if (RISCV::GPCRRegClass.hasSubClassEq(RC)) {
-      Opcode = ST.hasStdExtZCheriPureCap()
+      Opcode = ST.hasStdExtY() ? RISCV::CLY
+               : ST.hasStdExtZCheriPureCap()
                    ? RISCV::CLC
                    : (ST.isRV64() ? RISCV::CLC_128 : RISCV::CLC_64);
       IsScalableVector = false;
@@ -796,7 +803,8 @@ void RISCVInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
                RISCV::LW : RISCV::LD;
       IsScalableVector = false;
     } else if (RISCV::GPCRRegClass.hasSubClassEq(RC)) {
-      Opcode = ST.hasStdExtZCheriPureCap()
+      Opcode = ST.hasStdExtY() ? RISCV::LY
+               : ST.hasStdExtZCheriPureCap()
                    ? RISCV::LC
                    : (ST.isRV64() ? RISCV::LC_128 : RISCV::LC_64);
       IsScalableVector = false;
@@ -4334,17 +4342,19 @@ bool RISCV::isPrefetchInstr(const MachineInstr &MI) {
 
 unsigned RISCV::getPtrAddImmInst(const RISCVSubtarget &STI) {
   bool IsPurecap = RISCVABI::isCheriPureCapABI(STI.getTargetABI());
+  bool IsY = STI.hasStdExtY();
   bool IsZCheri = STI.hasStdExtZCheriPureCap();
   if (IsPurecap)
-    return IsZCheri ? RISCV::CADDI : RISCV::CIncOffsetImm;
+    return IsY ? RISCV::YADDI : IsZCheri ? RISCV::CADDI : RISCV::CIncOffsetImm;
   return RISCV::ADDI;
 }
 
 unsigned RISCV::getPtrAddInst(const RISCVSubtarget &STI) {
   bool IsPurecap = RISCVABI::isCheriPureCapABI(STI.getTargetABI());
+  bool IsY = STI.hasStdExtY();
   bool IsZCheri = STI.hasStdExtZCheriPureCap();
   if (IsPurecap)
-    return IsZCheri ? RISCV::CADD : RISCV::CIncOffset;
+    return IsY ? RISCV::YADD : IsZCheri ? RISCV::CADD : RISCV::CIncOffset;
   return RISCV::ADD;
 }
 

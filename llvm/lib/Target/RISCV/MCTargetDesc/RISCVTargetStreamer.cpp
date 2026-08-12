@@ -62,6 +62,7 @@ void RISCVTargetStreamer::setTargetABI(RISCVABI::ABI ABI) {
 void RISCVTargetStreamer::setFlagsFromFeatures(const MCSubtargetInfo &STI) {
   HasRVC = STI.hasFeature(RISCV::FeatureStdExtC) ||
            STI.hasFeature(RISCV::FeatureStdExtZca);
+  HasRVY = STI.hasFeature(RISCV::FeatureStdExtY);
   HasTSO = STI.hasFeature(RISCV::FeatureStdExtZtso);
   IsCapMode = STI.hasFeature(RISCV::FeatureCapMode);
 }

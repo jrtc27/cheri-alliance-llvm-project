@@ -115,7 +115,7 @@ bool RISCVExpandAtomicPseudo::expandMI(MachineBasicBlock &MBB,
   // expanded instructions for each pseudo is correct in the Size field of the
   // tablegen definition for the pseudo.
   const auto &Subtarget = MBB.getParent()->getSubtarget<RISCVSubtarget>();
-  MVT CLenVT = Subtarget.hasStdExtZCheriPureCapOrCheri()
+  MVT CLenVT = Subtarget.hasStdExtYOrZCheriPureCapOrCheri()
                    ? Subtarget.typeForCapabilities()
                    : MVT();
   switch (MBBI->getOpcode()) {
@@ -532,6 +532,40 @@ static unsigned getSCForRMWCap128(bool PtrIsCap, AtomicOrdering Ordering) {
   }
 }
 
+static unsigned getLRForRMWCapY(bool PtrIsCap, AtomicOrdering Ordering) {
+  switch (Ordering) {
+  default:
+    llvm_unreachable("Unexpected AtomicOrdering");
+  case AtomicOrdering::Monotonic:
+    return PtrIsCap ? RISCV::CLR_Y : RISCV::LR_Y;
+  case AtomicOrdering::Acquire:
+    return PtrIsCap ? RISCV::CLR_Y_AQ : RISCV::LR_Y_AQ;
+  case AtomicOrdering::Release:
+    return PtrIsCap ? RISCV::CLR_Y_RL : RISCV::LR_Y_RL;
+  case AtomicOrdering::AcquireRelease:
+    return PtrIsCap ? RISCV::CLR_Y_AQ : RISCV::LR_Y_AQ;
+  case AtomicOrdering::SequentiallyConsistent:
+    return PtrIsCap ? RISCV::CLR_Y_AQ_RL : RISCV::LR_Y_AQ_RL;
+  }
+}
+
+static unsigned getSCForRMWCapY(bool PtrIsCap, AtomicOrdering Ordering) {
+  switch (Ordering) {
+  default:
+    llvm_unreachable("Unexpected AtomicOrdering");
+  case AtomicOrdering::Monotonic:
+    return PtrIsCap ? RISCV::CSC_Y : RISCV::SC_Y;
+  case AtomicOrdering::Acquire:
+    return PtrIsCap ? RISCV::CSC_Y_AQ : RISCV::SC_Y_AQ;
+  case AtomicOrdering::Release:
+    return PtrIsCap ? RISCV::CSC_Y : RISCV::SC_C;
+  case AtomicOrdering::AcquireRelease:
+    return PtrIsCap ? RISCV::CSC_Y_AQ : RISCV::SC_Y_AQ;
+  case AtomicOrdering::SequentiallyConsistent:
+    return PtrIsCap ? RISCV::CSC_Y_AQ_RL : RISCV::SC_Y_AQ_RL;
+  }
+}
+
 static unsigned getLRForRMWCapZCheri(bool PtrIsCap, AtomicOrdering Ordering) {
   switch (Ordering) {
   default:
@@ -567,6 +601,7 @@ static unsigned getSCForRMWCapZCheri(bool PtrIsCap, AtomicOrdering Ordering) {
 }
 
 static unsigned getLRForRMW(bool PtrIsCap, AtomicOrdering Ordering, MVT VT, const RISCVSubtarget *Subtarget) {
+  const bool HasY = Subtarget->hasStdExtY();
   const bool ZCheriPurecap = Subtarget->hasStdExtZCheriPureCap();
   if (VT == MVT::i8)
     return getLRForRMW8(PtrIsCap, Ordering);
@@ -577,15 +612,18 @@ static unsigned getLRForRMW(bool PtrIsCap, AtomicOrdering Ordering, MVT VT, cons
   if (VT == MVT::i64)
     return getLRForRMW64(PtrIsCap, Ordering, Subtarget);
   if (VT == MVT::c64)
-    return ZCheriPurecap ? getLRForRMWCapZCheri(PtrIsCap, Ordering)
-                         : getLRForRMWCap64(PtrIsCap, Ordering);
+    return HasY            ? getLRForRMWCapY(PtrIsCap, Ordering)
+           : ZCheriPurecap ? getLRForRMWCapZCheri(PtrIsCap, Ordering)
+                           : getLRForRMWCap64(PtrIsCap, Ordering);
   if (VT == MVT::c128)
-    return ZCheriPurecap ? getLRForRMWCapZCheri(PtrIsCap, Ordering)
-                         : getLRForRMWCap128(PtrIsCap, Ordering);
+    return HasY            ? getLRForRMWCapY(PtrIsCap, Ordering)
+           : ZCheriPurecap ? getLRForRMWCapZCheri(PtrIsCap, Ordering)
+                           : getLRForRMWCap128(PtrIsCap, Ordering);
   llvm_unreachable("Unexpected LR type\n");
 }
 
 static unsigned getSCForRMW(bool PtrIsCap, AtomicOrdering Ordering, MVT VT, const RISCVSubtarget *Subtarget) {
+  const bool HasY = Subtarget->hasStdExtY();
   const bool ZCheriPurecap = Subtarget->hasStdExtZCheriPureCap();
   if (VT == MVT::i8)
     return getSCForRMW8(PtrIsCap, Ordering);
@@ -596,11 +634,13 @@ static unsigned getSCForRMW(bool PtrIsCap, AtomicOrdering Ordering, MVT VT, cons
   if (VT == MVT::i64)
     return getSCForRMW64(PtrIsCap, Ordering, Subtarget);
   if (VT == MVT::c64)
-    return ZCheriPurecap ? getSCForRMWCapZCheri(PtrIsCap, Ordering)
-                         : getSCForRMWCap64(PtrIsCap, Ordering);
+    return HasY            ? getSCForRMWCapY(PtrIsCap, Ordering)
+           : ZCheriPurecap ? getSCForRMWCapZCheri(PtrIsCap, Ordering)
+                           : getSCForRMWCap64(PtrIsCap, Ordering);
   if (VT == MVT::c128)
-    return ZCheriPurecap ? getSCForRMWCapZCheri(PtrIsCap, Ordering)
-                         : getSCForRMWCap128(PtrIsCap, Ordering);
+    return HasY            ? getSCForRMWCapY(PtrIsCap, Ordering)
+           : ZCheriPurecap ? getSCForRMWCapZCheri(PtrIsCap, Ordering)
+                           : getSCForRMWCap128(PtrIsCap, Ordering);
   llvm_unreachable("Unexpected SC type\n");
 }
 
@@ -630,6 +670,7 @@ static void doAtomicBinOpExpansion(const RISCVInstrInfo *TII, MachineInstr &MI,
     ScratchIntReg = ScratchReg;
     DestIntReg = DestReg;
   }
+  const bool HasY = ST.hasFeature(RISCV::FeatureStdExtY);
   const bool HasZCheriPurecap =
       ST.hasFeature(RISCV::FeatureStdExtZCheriPureCap);
 
@@ -653,7 +694,9 @@ static void doAtomicBinOpExpansion(const RISCVInstrInfo *TII, MachineInstr &MI,
   case AtomicRMWInst::Add:
     if (VT.isFatPointer()) {
       BuildMI(LoopMBB, DL,
-              TII->get(HasZCheriPurecap ? RISCV::CADD : RISCV::CIncOffset),
+              TII->get(HasY               ? RISCV::YADD
+                       : HasZCheriPurecap ? RISCV::CADD
+                                          : RISCV::CIncOffset),
               ScratchReg)
           .addReg(DestReg)
           .addReg(IncrReg);
@@ -698,7 +741,9 @@ static void doAtomicBinOpExpansion(const RISCVInstrInfo *TII, MachineInstr &MI,
   }
   if (VT.isFatPointer() && BinOp != AtomicRMWInst::Add)
     BuildMI(LoopMBB, DL,
-            TII->get(HasZCheriPurecap ? RISCV::SCADDR : RISCV::CSetAddr),
+            TII->get(HasY               ? RISCV::YADDRW
+                     : HasZCheriPurecap ? RISCV::SCADDR
+                                        : RISCV::CSetAddr),
             ScratchReg)
         .addReg(DestReg)
         .addReg(ScratchIntReg);
@@ -982,6 +1027,7 @@ bool RISCVExpandAtomicPseudo::expandAtomicMinMaxOp(
       ScratchIntReg = ScratchReg;
       IncrIntReg = IncrReg;
     }
+    const bool HasY = MF->getSubtarget().hasFeature(RISCV::FeatureStdExtY);
     const bool HasZCheriPurecap =
         MF->getSubtarget().hasFeature(RISCV::FeatureStdExtZCheriPureCap);
 
@@ -995,7 +1041,9 @@ bool RISCVExpandAtomicPseudo::expandAtomicMinMaxOp(
         .addReg(AddrReg);
     if (VT.isFatPointer())
       BuildMI(LoopHeadMBB, DL,
-              TII->get(HasZCheriPurecap ? RISCV::CMV : RISCV::CMove),
+              TII->get(HasY               ? RISCV::YMV
+                       : HasZCheriPurecap ? RISCV::CMV
+                                          : RISCV::CMove),
               ScratchReg)
           .addReg(DestReg);
     else

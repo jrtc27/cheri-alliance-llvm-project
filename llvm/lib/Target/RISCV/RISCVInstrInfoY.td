@@ -15,6 +15,23 @@
 // Operand definitions.
 //===----------------------------------------------------------------------===//
 
+def YGPRNoX0ZeroOffsetMemOpOperand : AsmOperandClass {
+  let Name = "YGPRNoX0ZeroOffsetMemOpOperand";
+  let RenderMethod = "addRegOperands";
+  let PredicateMethod = "isYGPRNoX0";
+  let ParserMethod = "parseZeroOffsetMemOp";
+  let DiagnosticType = "InvalidYGPRNoX0";
+}
+
+def YGPRNoX0MemZeroOffset : MemOperand<GPCRNoC0> {
+  let ParserMatchClass = YGPRNoX0ZeroOffsetMemOpOperand;
+  let PrintMethod = "printZeroOffsetMemOp";
+}
+
+def YGPRNoX0Mem : MemOperand<GPCRNoC0> {
+  let ParserMatchClass = YGPRNoX0Operand;
+}
+
 def YBNDSWImmOperand : AsmOperandClass {
   let Name = "YBNDSWImm";
   let RenderMethod = "addImmOperands";
@@ -55,6 +72,14 @@ class RVY_rr<bits<7> funct7, string opcodestr, DAGOperand rdOp,
              DAGOperand rs1Op, DAGOperand rs2Op>
     : RVInstR<funct7, 0b000, OPC_RVY_A, (outs rdOp:$rd),
               (ins rs1Op:$rs1, rs2Op:$rs2), opcodestr, "$rd, $rs1, $rs2">;
+
+// Like RVY_rr, except rs1=0
+class RVY_0r<bits<7> funct7, string opcodestr, DAGOperand rdOp,
+             DAGOperand rs2Op>
+    : RVInstR<funct7, 0b000, OPC_RVY_A, (outs rdOp:$rd),
+              (ins rs2Op:$rs2), opcodestr, "$rd, $rs2"> {
+  let rs1 = 0;
+}
 
 // Like RVY_rr, except rs2 is now an additional function code.
 class RVYInst2Op<bits<7> funct7, bits<5> funct5, DAGOperand rdOp,
@@ -101,6 +126,57 @@ class RVY_srli<string opcodestr>
   let Inst{31-27} = 0b00000;
   let Inst{26-20} = shamt;
 }
+
+let mayLoad = 1 in
+class RVY_load<bits<3> funct3, string opcodestr, DAGOperand rs1Op>
+    : RVInstI<funct3, OPC_RVY_A, (outs YGPR:$rd),
+              (ins rs1Op:$rs1, simm12:$imm12),
+              opcodestr, "$rd, ${imm12}(${rs1})">;
+
+let mayStore = 1 in
+class RVY_store<bits<3> funct3, string opcodestr, DAGOperand rs1Op>
+    : RVInstS<funct3, OPC_RVY_A, (outs),
+              (ins YGPR:$rs2, rs1Op:$rs1, simm12:$imm12),
+              opcodestr, "$rs2, ${imm12}(${rs1})">;
+
+class RVY_ymodesw<bits<5> funct5, string opcodestr>
+    : RVInstR<0b0101011, 0b000, OPC_RVY_A, (outs), (ins), opcodestr, ""> {
+  let rs2 = funct5;
+  let rs1 = 0;
+  let rd = 0;
+}
+
+let mayLoad = 1 in
+class LR_Y_r<bits<5> funct5, bit aq, bit rl, string opcodestr,
+             DAGOperand rs1Op>
+    : RVInstRAtomic<funct5, aq, rl, 0b011, OPC_RVY_A,
+                    (outs YGPR:$rd), (ins rs1Op:$rs1),
+                    opcodestr, "$rd, $rs1"> {
+  let rs2 = 0;
+}
+
+multiclass LR_Y_r_aq_rl<bits<5> funct5, string opcodestr,
+                        DAGOperand rs1Op> {
+  def ""     : LR_Y_r<funct5, 0, 0, opcodestr, rs1Op>;
+  def _AQ    : LR_Y_r<funct5, 1, 0, opcodestr # ".aq", rs1Op>;
+  def _RL    : LR_Y_r<funct5, 0, 1, opcodestr # ".rl", rs1Op>;
+  def _AQ_RL : LR_Y_r<funct5, 1, 1, opcodestr # ".aqrl", rs1Op>;
+}
+
+let mayLoad = 1, mayStore = 1 in
+class AMO_Y_rr<bits<5> funct5, bit aq, bit rl, string opcodestr,
+               DAGOperand rdOp, DAGOperand rs1Op>
+    : RVInstRAtomic<funct5, aq, rl, 0b011, OPC_RVY_A,
+                    (outs rdOp:$rd), (ins rs1Op:$rs1, YGPR:$rs2),
+                    opcodestr, "$rd, $rs2, $rs1">;
+
+multiclass AMO_Y_rr_aq_rl<bits<5> funct5, string opcodestr,
+                          DAGOperand rdOp, DAGOperand rs1Op> {
+  def ""     : AMO_Y_rr<funct5, 0, 0, opcodestr, rdOp, rs1Op>;
+  def _AQ    : AMO_Y_rr<funct5, 1, 0, opcodestr # ".aq", rdOp, rs1Op>;
+  def _RL    : AMO_Y_rr<funct5, 0, 1, opcodestr # ".rl", rdOp, rs1Op>;
+  def _AQ_RL : AMO_Y_rr<funct5, 1, 1, opcodestr # ".aqrl", rdOp, rs1Op>;
+}
 } // hasSideEffects = 0, mayLoad = 0, mayStore = 0
 
 let Predicates = [HasStdExtY] in {
@@ -131,6 +207,7 @@ def : InstAlias<"ybndsw $rd, $rs1, $imm",
 def YBNDSRW : RVY_rr<0b0100011, "ybndsrw", YGPR, YGPR, GPR>;
 def YSUNSEAL : RVY_rr<0b0000111, "ysunseal", YGPR, YGPR, YGPR>;
 def YBLD : RVY_rr<0b0001111, "ybld", YGPR, YGPR, YGPR>;
+def YSENTRY : RVY_0r<0b0010111, "ysentry", YGPR, YGPR>;
 
 //
 // Instructions to Decode Capability Bounds
@@ -163,3 +240,41 @@ def YEQ : RVY_rr<0b0000110, "yeq", GPR, YGPR, YGPR>;
 def YSS : RVY_rr<0b0001110, "yss", GPR, YGPR, YGPR>;
 def YAMASK : RVY_r_xx<0b00000, "yamask">;
 } // Predicates = [HasStdExtY]
+
+//
+// Instructions to Load/Store Capabilities
+//
+let Predicates = [HasStdExtY, NotCapMode] in {
+def LY : RVY_load<0b001, "ly", GPRMem>;
+def SY : RVY_store<0b010, "sy", GPRMem>;
+}
+let Predicates = [HasStdExtY, IsCapMode], DecoderNamespace = "CapModeOnly_" in {
+def CLY : RVY_load<0b001, "ly", YGPRNoX0Mem>;
+def CSY : RVY_store<0b010, "sy", YGPRNoX0Mem>;
+}
+
+//
+// 'Zyhybrid' extension
+//
+let Predicates = [HasStdExtZyhybrid] in {
+def YMODER : RVY_r_xy<0b00110, "ymoder">;
+def YMODEW : RVY_rr<0b0101011, "ymodew", YGPR, YGPRNoX0, GPR>;
+def YMODESWY : RVY_ymodesw<0b00000, "ymodeswy">;
+def YMODESWI : RVY_ymodesw<0b00001, "ymodeswi">;
+}
+
+//
+// 'Y' + 'A' extension
+//
+let Predicates = [HasStdExtY, HasStdExtA, NotCapMode] in {
+defm LR_Y : LR_Y_r_aq_rl<0b00010, "lr.y", GPRMemZeroOffset>;
+defm AMOSWAP_Y : AMO_Y_rr_aq_rl<0b00001, "amoswap.y", YGPR, GPRMemZeroOffset>;
+defm SC_Y : AMO_Y_rr_aq_rl<0b00011, "sc.y", GPR, GPRMemZeroOffset>;
+}
+let Predicates = [HasStdExtY, HasStdExtA, IsCapMode], DecoderNamespace = "CapModeOnly_" in {
+defm CLR_Y : LR_Y_r_aq_rl<0b00010, "lr.y", YGPRNoX0MemZeroOffset>;
+defm CAMOSWAP_Y : AMO_Y_rr_aq_rl<0b00001, "amoswap.y", YGPR, YGPRNoX0MemZeroOffset>;
+defm CSC_Y : AMO_Y_rr_aq_rl<0b00011, "sc.y", GPR, YGPRNoX0MemZeroOffset>;
+}
+
+// YZba

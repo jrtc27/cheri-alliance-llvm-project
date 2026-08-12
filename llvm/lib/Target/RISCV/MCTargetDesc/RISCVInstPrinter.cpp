@@ -77,6 +77,21 @@ void RISCVInstPrinter::printRegName(raw_ostream &O, MCRegister Reg) {
   markup(O, Markup::Register) << getRegisterName(Reg);
 }
 
+static MCRegister maybeConvertGPCRToGPR(const MCSubtargetInfo &STI,
+                                        MCRegister Reg) {
+  // Internally we name registers according to Xcheri, but Y does not prefix
+  // its capability registers.
+  if (STI.hasFeature(RISCV::FeatureStdExtY) && Reg >= RISCV::C0 &&
+      Reg <= RISCV::C31)
+    return Reg - RISCV::C0 + RISCV::X0;
+  return Reg;
+}
+
+void RISCVInstPrinter::printRegName(const MCSubtargetInfo &STI, raw_ostream &O,
+                                    MCRegister Reg) {
+  return printRegName(O, maybeConvertGPCRToGPR(STI, Reg));
+}
+
 void RISCVInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
                                     const MCSubtargetInfo &STI, raw_ostream &O,
                                     const char *Modifier) {
@@ -84,7 +99,7 @@ void RISCVInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
   const MCOperand &MO = MI->getOperand(OpNo);
 
   if (MO.isReg()) {
-    printRegName(O, MO.getReg());
+    printRegName(STI, O, MO.getReg());
     return;
   }
 
@@ -224,7 +239,7 @@ void RISCVInstPrinter::printZeroOffsetMemOp(const MCInst *MI, unsigned OpNo,
 
   assert(MO.isReg() && "printZeroOffsetMemOp can only print register operands");
   O << "(";
-  printRegName(O, MO.getReg());
+  printRegName(STI, O, MO.getReg());
   O << ")";
 }
 
@@ -249,24 +264,24 @@ void RISCVInstPrinter::printRlist(const MCInst *MI, unsigned OpNo,
                                   const MCSubtargetInfo &STI, raw_ostream &O) {
   unsigned Imm = MI->getOperand(OpNo).getImm();
   O << "{";
-  printRegName(O, RISCV::X1);
+  printRegName(STI, O, RISCV::X1);
 
   if (Imm >= RISCVZC::RLISTENCODE::RA_S0) {
     O << ", ";
-    printRegName(O, RISCV::X8);
+    printRegName(STI, O, RISCV::X8);
   }
 
   if (Imm >= RISCVZC::RLISTENCODE::RA_S0_S1) {
     O << '-';
     if (Imm == RISCVZC::RLISTENCODE::RA_S0_S1 || ArchRegNames)
-      printRegName(O, RISCV::X9);
+      printRegName(STI, O, RISCV::X9);
   }
 
   if (Imm >= RISCVZC::RLISTENCODE::RA_S0_S2) {
     if (ArchRegNames)
       O << ", ";
     if (Imm == RISCVZC::RLISTENCODE::RA_S0_S2 || ArchRegNames)
-      printRegName(O, RISCV::X18);
+      printRegName(STI, O, RISCV::X18);
   }
 
   if (Imm >= RISCVZC::RLISTENCODE::RA_S0_S3) {
@@ -277,7 +292,7 @@ void RISCVInstPrinter::printRlist(const MCInst *MI, unsigned OpNo,
     // must skip to S11(X27).
     if (Imm == RISCVZC::RLISTENCODE::RA_S0_S11)
       ++Offset;
-    printRegName(O, RISCV::X19 + Offset);
+    printRegName(STI, O, RISCV::X19 + Offset);
   }
 
   O << "}";
@@ -288,12 +303,12 @@ void RISCVInstPrinter::printRegReg(const MCInst *MI, unsigned OpNo,
   const MCOperand &MO = MI->getOperand(OpNo);
 
   assert(MO.isReg() && "printRegReg can only print register operands");
-  printRegName(O, MO.getReg());
+  printRegName(STI, O, MO.getReg());
 
   O << "(";
   const MCOperand &MO1 = MI->getOperand(OpNo + 1);
   assert(MO1.isReg() && "printRegReg can only print register operands");
-  printRegName(O, MO1.getReg());
+  printRegName(STI, O, MO1.getReg());
   O << ")";
 }
 
@@ -326,8 +341,13 @@ void RISCVInstPrinter::printVMaskReg(const MCInst *MI, unsigned OpNo,
   if (MO.getReg() == RISCV::NoRegister)
     return;
   O << ", ";
-  printRegName(O, MO.getReg());
+  printRegName(STI, O, MO.getReg());
   O << ".t";
+}
+
+const char *RISCVInstPrinter::getRegisterName(const MCSubtargetInfo &STI,
+                                              MCRegister Reg) {
+  return getRegisterName(maybeConvertGPCRToGPR(STI, Reg));
 }
 
 const char *RISCVInstPrinter::getRegisterName(MCRegister Reg) {

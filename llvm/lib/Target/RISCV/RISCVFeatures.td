@@ -1021,6 +1021,7 @@ def HasStdExtSmctrOrSsctr : Predicate<"Subtarget->hasStdExtSmctrOrSsctr()">,
 def FeatureStdExtY : RISCVExtension<0, 99, "'Base Y' (CHERI)">;
 def HasStdExtY : Predicate<"Subtarget->hasStdExtY()">,
                  AssemblerPredicate<(all_of FeatureStdExtY), "'Base Y' (CHERI)">;
+def NoStdExtY : Predicate<"!Subtarget->hasStdExtY()">;
 
 def FeatureStdExtZyhybrid
     : RISCVExtension<0, 99, "CHERI Pointer Modes", [FeatureStdExtY]>;
@@ -1403,6 +1404,15 @@ def HasZCheriPurecapOrCheri
                 AssemblerPredicate<(any_of FeatureStdExtXCheri, FeatureStdExtZCheriPureCap),
                 "'Zcheripurecap' (CHERI aware Instructions) or "
                 "Implements CHERI extension">;
+
+def HasYOrZCheriPurecapOrCheri
+    : Predicate<"Subtarget->hasStdExtY() || Subtarget->hasCheri() || "
+                "Subtarget->hasStdExtZCheriPureCap()">,
+      AssemblerPredicate<(any_of FeatureStdExtY, FeatureStdExtXCheri,
+                                 FeatureStdExtZCheriPureCap),
+                         "'Base Y' (CHERI) or "
+                         "'Zcheripurecap' (CHERI aware Instructions) or "
+                         "Implements CHERI extension">;
 
 def NotHasZCheriPurecap
     : Predicate<"!Subtarget->hasStdExtZCheriPureCap()">,
