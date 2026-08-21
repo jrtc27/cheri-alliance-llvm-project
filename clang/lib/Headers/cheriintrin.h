@@ -47,7 +47,8 @@ typedef long cheri_otype_t;
  * otypes */
 #define CHERI_OTYPE_UNSEALED ((cheri_otype_t)-1)
 #define CHERI_OTYPE_SENTRY ((cheri_otype_t)-2)
-#elif defined(__aarch64__) || defined(__riscv_zcheripurecap)
+#elif defined(__aarch64__) || defined(__riscv_y) ||                            \
+    defined(__riscv_zcheripurecap)
 #define CHERI_OTYPE_UNSEALED ((cheri_otype_t)0)
 #define CHERI_OTYPE_SENTRY ((cheri_otype_t)1)
 #else
@@ -59,14 +60,14 @@ typedef long cheri_otype_t;
 #define cheri_is_unsealed(x) (!__builtin_cheri_sealed_get(x))
 /* TODO: builtins for indirect sentries */
 #define cheri_sentry_create(x) __builtin_cheri_seal_entry(x)
-#if !defined(__riscv_zcheripurecap)
+#if !defined(__riscv_y) && !defined(__riscv_zcheripurecap)
 #define cheri_seal(x, y) __builtin_cheri_seal((x), (y))
 #define cheri_unseal(x, y) __builtin_cheri_unseal((x), (y))
 #endif
 
 /* Reconstruct capabilities from raw data: */
 #define cheri_cap_build(x, y) __builtin_cheri_cap_build((x), (y))
-#if !defined(__riscv_zcheripurecap)
+#if !defined(__riscv_y) && !defined(__riscv_zcheripurecap)
 #define cheri_seal_conditionally(x, y)                                         \
   __builtin_cheri_conditional_seal((x), (y))
 #define cheri_type_copy(x, y) __builtin_cheri_cap_type_copy((x), (y))
@@ -112,11 +113,12 @@ typedef enum __attribute__((flag_enum, enum_extensibility(open))) {
 
 /* Partially portable builtins: */
 /* Note: {get,set}flags does nothing for MIPS, but can still be used. */
-#if defined(__riscv_zcherihybrid) || defined(__riscv_xcheri) || defined(__mips__)
+#if defined(__riscv_y) || defined(__riscv_zcherihybrid) ||                     \
+    defined(__riscv_xcheri) || defined(__mips__)
 #define cheri_flags_get(x) __builtin_cheri_flags_get(x)
 #define cheri_flags_set(x, y) __builtin_cheri_flags_set((x), (y))
 #endif
-#if !defined(__riscv_zcheripurecap)
+#if !defined(__riscv_y) && !defined(__riscv_zcheripurecap)
 #define cheri_tags_load(x) __builtin_cheri_cap_load_tags(x)
 #endif
 
