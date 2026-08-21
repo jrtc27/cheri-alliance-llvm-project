@@ -235,35 +235,35 @@ def CHERI_CSRRCI: CheriCSR_ii<0b111, "csrrci">;
 }
 
 def : InstAlias<"csrr $cd, $csr",
-                (CHERI_CSRRS GPCR: $cd, cheri_csr_sysreg:$csr,           X0)>;
+                (CHERI_CSRRS RVYCompatGPCR:$cd, cheri_csr_sysreg:$csr,                X0)>;
 def : InstAlias<"csrw $csr, $cs",
-                (CHERI_CSRRW        C0, cheri_csr_sysreg:$csr,     GPCR:$cs)>;
-def : InstAlias<"csrs $csr, $cs",
-                (CHERI_CSRRS        C0, cheri_csr_sysreg:$csr,      GPR:$cs)>;
-def : InstAlias<"csrc $csr, $cs",
-                (CHERI_CSRRC        C0, cheri_csr_sysreg:$csr,      GPR:$cs)>;
+                (CHERI_CSRRW                C0, cheri_csr_sysreg:$csr, RVYCompatGPCR:$cs)>;
+def : InstAlias<"csrs $csr, $rs",
+                (CHERI_CSRRS                C0, cheri_csr_sysreg:$csr,           GPR:$rs)>;
+def : InstAlias<"csrc $csr, $rs",
+                (CHERI_CSRRC                C0, cheri_csr_sysreg:$csr,           GPR:$rs)>;
 
 def : InstAlias<"csrwi $csr, $imm",
-                (CHERI_CSRRWI       C0, cheri_csr_sysreg:$csr,   uimm5:$imm)>;
+                (CHERI_CSRRWI C0, cheri_csr_sysreg:$csr, uimm5:$imm)>;
 def : InstAlias<"csrsi $csr, $imm",
-                (CHERI_CSRRSI       C0, cheri_csr_sysreg:$csr,   uimm5:$imm)>;
+                (CHERI_CSRRSI C0, cheri_csr_sysreg:$csr, uimm5:$imm)>;
 def : InstAlias<"csrci $csr, $imm",
-                (CHERI_CSRRCI       C0, cheri_csr_sysreg:$csr,   uimm5:$imm)>;
+                (CHERI_CSRRCI C0, cheri_csr_sysreg:$csr, uimm5:$imm)>;
 
 let EmitPriority = 0 in {
 def : InstAlias<"csrw $csr, $imm",
-                (CHERI_CSRRWI       C0, cheri_csr_sysreg:$csr,   uimm5:$imm)>;
+                (CHERI_CSRRWI C0, cheri_csr_sysreg:$csr, uimm5:$imm)>;
 def : InstAlias<"csrs $csr, $imm",
-                (CHERI_CSRRSI       C0, cheri_csr_sysreg:$csr,   uimm5:$imm)>;
+                (CHERI_CSRRSI C0, cheri_csr_sysreg:$csr, uimm5:$imm)>;
 def : InstAlias<"csrc $csr, $imm",
-                (CHERI_CSRRCI       C0, cheri_csr_sysreg:$csr,   uimm5:$imm)>;
+                (CHERI_CSRRCI C0, cheri_csr_sysreg:$csr, uimm5:$imm)>;
 
 def : InstAlias<"csrrw $cd, $csr, $imm",
-                (CHERI_CSRRWI GPCR:$cd, cheri_csr_sysreg:$csr,   uimm5:$imm)>;
+                (CHERI_CSRRWI RVYCompatGPCR:$cd, cheri_csr_sysreg:$csr, uimm5:$imm)>;
 def : InstAlias<"csrrs $cd, $csr, $imm",
-                (CHERI_CSRRSI GPCR:$cd, cheri_csr_sysreg:$csr,   uimm5:$imm)>;
+                (CHERI_CSRRSI RVYCompatGPCR:$cd, cheri_csr_sysreg:$csr, uimm5:$imm)>;
 def : InstAlias<"csrrc $cd, $csr, $imm",
-                (CHERI_CSRRCI GPCR:$cd, cheri_csr_sysreg:$csr,   uimm5:$imm)>;
+                (CHERI_CSRRCI RVYCompatGPCR:$cd, cheri_csr_sysreg:$csr, uimm5:$imm)>;
 }
 
 } // Predicates = [HasYOrZCheriPurecap]

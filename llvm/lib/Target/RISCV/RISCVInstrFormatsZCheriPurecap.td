@@ -111,15 +111,15 @@ class CheriModeSwitchInstr<bits<7> funct7, RISCVOpcode opcode, string opcodestr>
 
 let hasNoSchedulingInfo = 1,
     hasSideEffects = 1, mayLoad = 0, mayStore = 0 in
-class CheriCSR_ir<bits<3> funct3, string opcodestr, RegisterClass rs1Class=GPCR>
-    : RVInstI<funct3, OPC_SYSTEM, (outs GPCR:$rd),
+class CheriCSR_ir<bits<3> funct3, string opcodestr, DAGOperand rs1Class=RVYCompatGPCR>
+    : RVInstI<funct3, OPC_SYSTEM, (outs RVYCompatGPCR:$rd),
               (ins cheri_csr_sysreg:$imm12, rs1Class:$rs1), opcodestr,
               "$rd, $imm12, $rs1">, Sched<[WriteCSR, ReadCSR]>;
 
 let hasNoSchedulingInfo = 1,
     hasSideEffects = 1, mayLoad = 0, mayStore = 0 in
 class CheriCSR_ii<bits<3> funct3, string opcodestr>
-    : RVInstI<funct3, OPC_SYSTEM, (outs GPCR:$rd),
+    : RVInstI<funct3, OPC_SYSTEM, (outs RVYCompatGPCR:$rd),
               (ins cheri_csr_sysreg:$imm12, uimm5:$rs1), opcodestr,
               "$rd, $imm12, $rs1">, Sched<[WriteCSR]>;
 
