@@ -1405,6 +1405,13 @@ def HasZCheriPurecapOrCheri
                 "'Zcheripurecap' (CHERI aware Instructions) or "
                 "Implements CHERI extension">;
 
+def HasYOrZCheriPurecap
+    : Predicate<"Subtarget->hasStdExtY() || "
+                "Subtarget->hasStdExtZCheriPureCap()">,
+      AssemblerPredicate<(any_of FeatureStdExtY, FeatureStdExtZCheriPureCap),
+                         "'Base Y' (CHERI) or "
+                         "'Zcheripurecap' (CHERI aware Instructions)">;
+
 def HasYOrZCheriPurecapOrCheri
     : Predicate<"Subtarget->hasStdExtY() || Subtarget->hasCheri() || "
                 "Subtarget->hasStdExtZCheriPureCap()">,

@@ -223,7 +223,7 @@ let Predicates = [NotCapMode, HasZCheriHybrid] in {
 // Special Capabilty Register Access Instructions
 //===----------------------------------------------------------------------===//
 
-let Predicates = [HasZCheriPurecap] in {
+let Predicates = [HasYOrZCheriPurecap] in {
 
 let DecoderNamespace = "CapModeOnly_" in {
 def CHERI_CSRRW : CheriCSR_ir<0b001, "csrrw">;
@@ -266,7 +266,7 @@ def : InstAlias<"csrrc $cd, $csr, $imm",
                 (CHERI_CSRRCI GPCR:$cd, cheri_csr_sysreg:$csr,   uimm5:$imm)>;
 }
 
-} // Predicates = [HasZCheriPurecap]
+} // Predicates = [HasYOrZCheriPurecap]
 
 //===----------------------------------------------------------------------===//
 // Memory-Access Instructions
