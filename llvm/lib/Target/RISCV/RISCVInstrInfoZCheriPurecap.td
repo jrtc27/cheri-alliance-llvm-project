@@ -463,8 +463,10 @@ def : PatGpr<int_cheri_representable_alignment_mask, CRAM_>;
 
 /// Assertion Instructions
 
+let Predicates = [HasZCheriPurecap] in {
 def : PatGpcrGpcr<riscv_cap_subset_test, SCSS, XLenVT>;
 def : PatGpcrGpcr<riscv_cap_equal_exact, SCEQ, XLenVT>;
+}
 
 /// Special Capability Register Access Instructions
 
