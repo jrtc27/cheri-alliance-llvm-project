@@ -19072,6 +19072,13 @@ SDValue RISCVTargetLowering::PerformDAGCombine(SDNode *N,
       return DAG.getSetCC(DL, MVT::i1, IntRes, DAG.getConstant(0, DL, XLenVT),
                           ISD::SETNE);
     }
+    case Intrinsic::cheri_cap_perms_and: {
+      if (!Subtarget.hasStdExtY())
+        return SDValue();
+      SDValue Neg = DAG.getNOT(DL, N->getOperand(2), XLenVT);
+      return DAG.getNode(RISCVISD::YPERMC, DL, Subtarget.typeForCapabilities(),
+                         N->getOperand(1), Neg);
+    }
     // Constant fold CRRL/CRAM when possible
     case Intrinsic::cheri_round_representable_length: {
       KnownBits Known = DAG.computeKnownBits(SDValue(N, 0));
@@ -21717,6 +21724,7 @@ const char *RISCVTargetLowering::getTargetNodeName(unsigned Opcode) const {
   NODE_NAME_CASE(CAP_SEALED_GET)
   NODE_NAME_CASE(CAP_SUBSET_TEST)
   NODE_NAME_CASE(CAP_EQUAL_EXACT)
+  NODE_NAME_CASE(YPERMC)
   NODE_NAME_CASE(RET_GLUE)
   NODE_NAME_CASE(SRET_GLUE)
   NODE_NAME_CASE(MRET_GLUE)
