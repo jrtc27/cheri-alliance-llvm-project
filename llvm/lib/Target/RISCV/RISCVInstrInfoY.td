@@ -337,7 +337,7 @@ def : Pat<(XLenVT (int_cheri_cap_offset_get YGPR:$cs1)),
           (SUB (XLenVT (EXTRACT_SUBREG YGPR:$cs1, sub_cap_addr)),
                (YBASER YGPR:$cs1))>;
 def : Pat<(int_cheri_cap_offset_set YGPR:$cs1, (XLenVT GPR:$rs2)),
-          (CADD (YADDRW YGPR:$cs1, (YBASER YGPR:$cs1)), GPR:$rs2)>;
+          (YADD (YADDRW YGPR:$cs1, (YBASER YGPR:$cs1)), GPR:$rs2)>;
 def : PatYgprGpr<int_cheri_cap_address_set, YADDRW>;
 
 //
