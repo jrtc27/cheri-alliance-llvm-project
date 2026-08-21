@@ -1615,11 +1615,11 @@ let Predicates = [HasCheri] in {
 def : Pat<(XLenVT (int_cheri_cap_diff GPCR:$cs1, GPCR:$cs2)),
           (SUB (XLenVT (EXTRACT_SUBREG GPCR:$cs1, sub_cap_addr)),
                (XLenVT (EXTRACT_SUBREG GPCR:$cs2, sub_cap_addr)))>;
+def : Pat<(XLenVT (ptrtoint GPCR:$rs1)), (PseudoCGetAddr GPCR:$rs1)>;
 
 let Predicates = [IsPureCapABI, NotHasZCheriPurecap, NoStdExtY] in {
 def : Pat<(inttoptr (XLenVT GPR:$rs2)), (CIncOffset C0, GPR:$rs2)>;
 def : Pat<(inttoptr simm12:$imm12), (CIncOffsetImm C0, simm12:$imm12)>;
-def : Pat<(XLenVT (ptrtoint GPCR:$rs1)), (PseudoCGetAddr GPCR:$rs1)>;
 }
 
 /// Null Capability Patterns

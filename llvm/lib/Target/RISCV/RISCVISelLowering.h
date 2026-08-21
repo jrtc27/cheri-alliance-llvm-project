@@ -175,6 +175,7 @@ enum NodeType : unsigned {
   CAP_SUBSET_TEST,
   /// Legalised int_cheri_cap_equal_exact
   CAP_EQUAL_EXACT,
+  YPERMC,
 
   // brev8, orc.b, zip, and unzip from Zbb and Zbkb. All operands are i32 or
   // XLenVT.

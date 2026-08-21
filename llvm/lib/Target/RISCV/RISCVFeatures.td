@@ -1430,6 +1430,14 @@ def HasZCheriHybrid
                 AssemblerPredicate<(all_of FeatureStdExtZCheriHybrid),
                 "'Zcherihybrid' (Backwards compatiblity for 'Zcheripurecap' with RISCV)">;
 
+def HasZyhybridOrZCheriHybrid
+    : Predicate<"Subtarget->hasStdExtZyhybrid() || "
+                "Subtarget->hasStdExtZCheriHybrid()">,
+      AssemblerPredicate<(any_of FeatureStdExtZyhybrid,
+                                 FeatureStdExtZCheriHybrid),
+                         "'Zyhybrid' (CHERI Pointer Modes)"
+                         "'Zcherihybrid' (Backwards compatiblity for 'Zcheripurecap' with RISCV)">;
+
 def NotHasZCheriHybrid
     : Predicate<"!Subtarget->hasStdExtZCheriHybrid()">,
                 AssemblerPredicate<(all_of (not FeatureStdExtZCheriHybrid)),

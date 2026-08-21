@@ -12,6 +12,18 @@
 //===----------------------------------------------------------------------===//
 
 //===----------------------------------------------------------------------===//
+// RISC-V specific DAG Nodes.
+//===----------------------------------------------------------------------===//
+
+// Target-dependent type requirements.
+def SDT_RISCVYPERMC : SDTypeProfile<1, 2, [
+  SDTCisPtrTy<0>, SDTCisSameAs<0, 1>, SDTCisInt<2>
+]>;
+
+// Target-dependent nodes.
+def riscv_ypermc : SDNode<"RISCVISD::YPERMC", SDT_RISCVYPERMC>;
+
+//===----------------------------------------------------------------------===//
 // Operand definitions.
 //===----------------------------------------------------------------------===//
 
@@ -146,7 +158,7 @@ class RVY_ymodesw<bits<5> funct5, string opcodestr>
   let rd = 0;
 }
 
-let mayLoad = 1 in
+let mayLoad = 1 in {
 class LR_Y_r<bits<5> funct5, bit aq, bit rl, string opcodestr,
              DAGOperand rs1Op>
     : RVInstRAtomic<funct5, aq, rl, 0b011, OPC_RVY_A,
@@ -162,8 +174,9 @@ multiclass LR_Y_r_aq_rl<bits<5> funct5, string opcodestr,
   def _RL    : LR_Y_r<funct5, 0, 1, opcodestr # ".rl", rs1Op>;
   def _AQ_RL : LR_Y_r<funct5, 1, 1, opcodestr # ".aqrl", rs1Op>;
 }
+} // mayLoad = 1
 
-let mayLoad = 1, mayStore = 1 in
+let mayLoad = 1, mayStore = 1 in {
 class AMO_Y_rr<bits<5> funct5, bit aq, bit rl, string opcodestr,
                DAGOperand rdOp, DAGOperand rs1Op>
     : RVInstRAtomic<funct5, aq, rl, 0b011, OPC_RVY_A,
@@ -177,6 +190,7 @@ multiclass AMO_Y_rr_aq_rl<bits<5> funct5, string opcodestr,
   def _RL    : AMO_Y_rr<funct5, 0, 1, opcodestr # ".rl", rdOp, rs1Op>;
   def _AQ_RL : AMO_Y_rr<funct5, 1, 1, opcodestr # ".aqrl", rdOp, rs1Op>;
 }
+} // mayLoad = 1, mayStore = 1
 } // hasSideEffects = 0, mayLoad = 0, mayStore = 0
 
 let Predicates = [HasStdExtY] in {
@@ -278,3 +292,132 @@ defm CSC_Y : AMO_Y_rr_aq_rl<0b00011, "sc.y", GPR, YGPRNoX0MemZeroOffset>;
 }
 
 // YZba
+
+//===----------------------------------------------------------------------===//
+// Pseudo-instructions and codegen patterns
+//===----------------------------------------------------------------------===//
+
+let Predicates = [HasStdExtY, IsCapMode] in {
+def : Pat<(riscv_load_tgot YGPR:$base, (XLenVT 0)),
+          (CLY YGPR:$base, 0)>;
+def : Pat<(riscv_load_tgot YGPR:$base, tglobaltlsaddr:$lo),
+          (CLY YGPR:$base, tglobaltlsaddr:$lo)>;
+}
+
+class PatYgpr<SDPatternOperator OpNode, RVInst Inst, ValueType RetVt=XLenVT>
+    : Pat<(RetVt (OpNode YGPR:$rs1)), (Inst YGPR:$rs1)>;
+
+class PatYgprYgpr<SDPatternOperator OpNode, RVInst Inst, ValueType RetVt=CLenVT>
+    : Pat<(RetVt (OpNode YGPR:$rs1, YGPR:$rs2)), (Inst YGPR:$rs1, YGPR:$rs2)>;
+
+class PatYgprGpr<SDPatternOperator OpNode, RVInst Inst>
+    : Pat<(OpNode YGPR:$rs1, (XLenVT GPR:$rs2)), (Inst YGPR:$rs1, GPR:$rs2)>;
+
+class PatYgprSimm12<SDPatternOperator OpNode, RVInstI Inst>
+    : Pat<(OpNode YGPR:$rs1, simm12:$imm12), (Inst YGPR:$rs1, simm12:$imm12)>;
+
+class PatYgprUimm12<SDPatternOperator OpNode, RVInstI Inst>
+    : Pat<(OpNode YGPR:$rs1, uimm12:$imm12), (Inst YGPR:$rs1, uimm12:$imm12)>;
+
+class PatGprYgpr<SDPatternOperator OpNode, RVInst Inst>
+    : Pat<(OpNode GPR:$rs1, YGPR:$rs2), (Inst GPR:$rs1, YGPR:$rs2)>;
+
+let Predicates = [HasStdExtY] in {
+//
+// Instructions to Update The Capability Pointer
+//
+def : PatYgprGpr<cptradd, YADD>;
+def : PatYgprSimm12<cptradd, YADDI>;
+def : Pat<(CapFrameAddrRegImm YGPR:$rs1, simm12:$imm12),
+          (YADDI YGPR:$rs1, simm12:$imm12)>;
+def : Pat<(inttoptr (XLenVT GPR:$rs2)), (YADDI C0, GPR:$rs2)>;
+def : Pat<(inttoptr simm12:$imm12), (YADDI C0, simm12:$imm12)>;
+// TODO: Copied from Zcheripurecap, should be DAG-to-DAG or similar
+def : Pat<(XLenVT (int_cheri_cap_offset_get YGPR:$cs1)),
+          (SUB (XLenVT (EXTRACT_SUBREG YGPR:$cs1, sub_cap_addr)),
+               (YBASER YGPR:$cs1))>;
+def : Pat<(int_cheri_cap_offset_set YGPR:$cs1, (XLenVT GPR:$rs2)),
+          (CADD (YADDRW YGPR:$cs1, (YBASER YGPR:$cs1)), GPR:$rs2)>;
+def : PatYgprGpr<int_cheri_cap_address_set, YADDRW>;
+
+//
+// Instructions to Manipulate Capabilities
+//
+def : PatYgprGpr<riscv_ypermc, YPERMC>;
+def : PatYgprGpr<int_cheri_cap_high_set, PACKY>;
+def : PatYgprGpr<int_cheri_cap_bounds_set_exact, YBNDSW>;
+def : Pat<(int_cheri_cap_bounds_set_exact YGPR:$rs1, ybndsw_imm:$imm),
+          (YBNDSWI YGPR:$rs1, ybndsw_imm:$imm)>;
+def : Pat<(int_cheri_bounded_stack_cap YGPR:$rs1, ybndsw_imm:$imm),
+          (YBNDSWI YGPR:$rs1, ybndsw_imm:$imm)>;
+def : Pat<(int_cheri_bounded_stack_cap_dynamic YGPR:$rs1, ybndsw_imm:$imm),
+          (YBNDSWI YGPR:$rs1, ybndsw_imm:$imm)>;
+def : PatYgprGpr<int_cheri_cap_bounds_set, YBNDSRW>;
+def : PatYgprGpr<int_cheri_bounded_stack_cap, YBNDSW>;
+def : PatYgprGpr<int_cheri_bounded_stack_cap_dynamic, YBNDSW>;
+def : PatYgprYgpr<int_cheri_cap_build, YBLD>;
+def : PatYgpr<int_cheri_cap_seal_entry, YSENTRY, CLenVT>;
+
+//
+// Instructions to Decode Capability Bounds
+//
+def : PatYgpr<int_cheri_cap_base_get, YBASER>;
+def : PatYgpr<int_cheri_cap_length_get, YLENR>;
+// TODO: Add an int_cheri_cap_top_get for YTOPR
+
+//
+// Instructions to Extract Capability Fields
+//
+def : PatYgpr<riscv_cap_tag_get, YTAGR>;
+def : PatYgpr<int_cheri_cap_perms_get, YPERMR>;
+def : PatYgpr<int_cheri_cap_type_get, YTYPER>;
+// TODO: Copied from Zcheripurecap, not valid for Zyseal, should legalise
+// in DAG-to-DAG or similar as != 0.
+def : PatYgpr<riscv_cap_sealed_get, YTYPER>;
+let Predicates = [HasStdExtY, IsRV64] in
+def : Pat<(int_cheri_cap_high_get YGPR:$rs1), (i64 (SRLIY YGPR:$rs1, 64))>;
+let Predicates = [HasStdExtY, IsRV32] in
+def : Pat<(int_cheri_cap_high_get YGPR:$rs1), (i32 (SRLIY YGPR:$rs1, 32))>;
+
+//
+// Miscellaneous Instructions to Handle Capability Data
+//
+def : PatYgprYgpr<riscv_cap_equal_exact, YEQ, XLenVT>;
+def : PatYgprYgpr<riscv_cap_subset_test, YSS, XLenVT>;
+// TODO: Copied from Zcheripurecap, should be DAG-to-DAG or similar
+def : Pat<(XLenVT (int_cheri_round_representable_length (XLenVT GPR:$rs1))),
+          (AND (ADD GPR:$rs1, (XORI (YAMASK GPR:$rs1), -1)), (YAMASK GPR:$rs1))>;
+def : PatGpr<int_cheri_representable_alignment_mask, YAMASK>;
+
+//
+// Instructions to Load/Store Capabilities
+//
+let Predicates = [HasStdExtY, NotCapMode] in {
+def  : LdPat<load, LY, CLenVT>;
+def  : StPat<store, SY, GPCR, CLenVT>;
+def  : LdPat<atomic_load_cap, LY, CLenVT>;
+def  : StPat<atomic_store_cap, SY, GPCR, CLenVT>;
+}
+let Predicates = [HasStdExtY, IsCapMode] in {
+defm : CheriLdPat<load, CLY, CLenVT>;
+defm : CheriStPat<store, CSY, GPCR, CLenVT>;
+defm : CheriLdPat<atomic_load_cap, CLY, CLenVT>;
+defm : CheriStPat<atomic_store_cap, CSY, GPCR, CLenVT>;
+}
+} // Predicates = [HasStdExtY]
+
+//
+// 'Zyhybrid' extension
+//
+let Predicates = [HasStdExtZyhybrid] in {
+def : PatYgpr<int_cheri_cap_flags_get, YMODER>;
+def : PatYgprGpr<int_cheri_cap_flags_set, YMODEW>;
+} // Predicates = [HasStdExtZyhybrid]
+
+//
+// 'Y' + 'A' extension
+//
+let Predicates = [HasStdExtY, HasStdExtA, NotCapMode] in
+defm : AMOCapPat<"", "atomic_swap_cap", "AMOSWAP_Y">;
+let Predicates = [HasStdExtY, HasStdExtA, IsCapMode] in
+defm : CheriAMOCapPat<"","atomic_swap_cap", "CAMOSWAP_Y">;
