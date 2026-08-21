@@ -469,7 +469,7 @@ def : PatGpcrGpcr<riscv_cap_equal_exact, SCEQ, XLenVT>;
 /// Special Capability Register Access Instructions
 
 let Predicates = [HasZyhybridOrZCheriHybrid] in
-def : Pat<(int_cheri_ddc_get), (CHERI_CSRRC CSR_DDC.Encoding, (XLenVT X0))>;
+def : Pat<(int_cheri_ddc_get), (CHERI_CSRRS CSR_DDC.Encoding, (XLenVT X0))>;
 
 
 // Pseudo instruction to handle getting pcc when in integer mode
