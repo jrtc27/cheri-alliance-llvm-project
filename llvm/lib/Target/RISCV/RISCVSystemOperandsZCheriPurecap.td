@@ -17,53 +17,64 @@
 
 
 class CheriSysReg<string name, bits<12> op> {
-    string Name = name;
-    bits<12> Encoding = op;
+  string Name = name;
+  bits<12> Encoding = op;
+  bit isYName = 0;
+  bit isZcheriName = 0;
+}
+
+multiclass CheriExtSysReg<string name, bits<12> op> {
+  let isYName = 1 in
+  def "" : CheriSysReg<name, op>;
+  let isZcheriName = 1 in
+  def C  : CheriSysReg<!strconcat(name, "c"), op>;
 }
 
 def CheriSysRegsList : GenericTable {
-    let FilterClass = "CheriSysReg";
-    let Fields = [
-        "Name", "Encoding"
-    ];
-    let PrimaryKey = [ "Encoding" ];
-    let PrimaryKeyName = "lookupCheriSysRegByEncoding";
+  let FilterClass = "CheriSysReg";
+  let Fields = [
+    "Name", "Encoding", "isYName", "isZcheriName"
+  ];
+
+  let PrimaryKey = [ "Encoding" ];
+  let PrimaryKeyName = "lookupCheriSysRegByEncoding";
+  let PrimaryKeyReturnRange = true;
 }
 
 def lookupCheriSysRegByName : SearchIndex {
-    let Table = CheriSysRegsList;
-    let Key = [ "Name" ];
+  let Table = CheriSysRegsList;
+  let Key = [ "Name" ];
 }
 
 //===----------------------------------------------------------------------===//
 // Debug-mode Cheri CSRs
 //===----------------------------------------------------------------------===//
-def : CheriSysReg<"dpcc", 0x7b1>;
-def : CheriSysReg<"dscratch0c", 0x7b2>;
-def : CheriSysReg<"dscratch1c", 0x7b3>;
+defm : CheriExtSysReg<"dpc", 0x7b1>;
+defm : CheriExtSysReg<"dscratch0", 0x7b2>;
+defm : CheriExtSysReg<"dscratch1", 0x7b3>;
 def : CheriSysReg<"dinfc", 0x7bd>;
 
 //===----------------------------------------------------------------------===//
 // Machine-mode Cheri CSRs
 //===----------------------------------------------------------------------===//
-def : CheriSysReg<"mtvecc", 0x305>;
-def : CheriSysReg<"mscratchc", 0x340>;
-def : CheriSysReg<"mepcc", 0x341>;
+defm : CheriExtSysReg<"mtvec", 0x305>;
+defm : CheriExtSysReg<"mscratch", 0x340>;
+defm : CheriExtSysReg<"mepc", 0x341>;
 def : CheriSysReg<"mtidc", 0x780>;
 
 //===----------------------------------------------------------------------===//
 // Supervisor-mode Cheri CSRs
 //===----------------------------------------------------------------------===//
-def : CheriSysReg<"stvecc", 0x105>;
-def : CheriSysReg<"sscratchc", 0x140>;
-def : CheriSysReg<"sepcc", 0x141>;
+defm : CheriExtSysReg<"stvec", 0x105>;
+defm : CheriExtSysReg<"sscratch", 0x140>;
+defm : CheriExtSysReg<"sepc", 0x141>;
 def : SysReg<"stval2", 0x14b>;
 def : CheriSysReg<"stidc", 0x580>;
 
 //===----------------------------------------------------------------------===//
 // User-mode Cheri CSRs
 //===----------------------------------------------------------------------===//
-def : CheriSysReg<"jvtc", 0x017>;
+defm : CheriExtSysReg<"jvt", 0x017>;
 def : CheriSysReg<"utidc", 0x480>;
 
 //===----------------------------------------------------------------------===//
@@ -82,9 +93,9 @@ def : SysReg<"htval2", 0x64b>;
 //===----------------------------------------------------------------------===//
 // Virtual Supervisor Registers
 //===----------------------------------------------------------------------===//
-def : CheriSysReg<"vstvecc", 0x205>;
-def : CheriSysReg<"vsscratchc", 0x240>;
-def : CheriSysReg<"vsepcc", 0x241>;
+defm : CheriExtSysReg<"vstvec", 0x205>;
+defm : CheriExtSysReg<"vsscratch", 0x240>;
+defm : CheriExtSysReg<"vsepc", 0x241>;
 def : CheriSysReg<"vstdc", 0x245>;
 def : SysReg<"vstval2", 0x24b>;
 def : CheriSysReg<"vstidc", 0xa80>;

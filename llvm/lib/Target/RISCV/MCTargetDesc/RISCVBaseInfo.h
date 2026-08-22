@@ -515,6 +515,8 @@ namespace RISCVCheriSysReg {
 struct CheriSysReg {
   const char *Name;
   unsigned Encoding;
+  bool IsYName;
+  bool IsZcheriName;
 };
 
 #define GET_CheriSysRegsList_DECL

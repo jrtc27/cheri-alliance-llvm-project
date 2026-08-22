@@ -406,7 +406,7 @@ static DecodeStatus decodeCheriSysReg(MCInst &Inst, uint64_t Imm,
                                       const MCDisassembler *Decoder) {
   assert(isUInt<12>(Imm) && "Invalid immediate");
   const auto CheriSysReg = RISCVCheriSysReg::lookupCheriSysRegByEncoding(Imm);
-  if (!CheriSysReg)
+  if (CheriSysReg.empty())
     return MCDisassembler::Fail;
   Inst.addOperand(MCOperand::createImm(Imm));
   return MCDisassembler::Success;
