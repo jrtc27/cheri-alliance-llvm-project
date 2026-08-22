@@ -330,7 +330,7 @@ def : PatYgprGpr<cptradd, YADD>;
 def : PatYgprSimm12<cptradd, YADDI>;
 def : Pat<(CapFrameAddrRegImm YGPR:$rs1, simm12:$imm12),
           (YADDI YGPR:$rs1, simm12:$imm12)>;
-def : Pat<(inttoptr (XLenVT GPR:$rs2)), (YADDI C0, GPR:$rs2)>;
+def : Pat<(inttoptr (XLenVT GPR:$rs2)), (YADD C0, GPR:$rs2)>;
 def : Pat<(inttoptr simm12:$imm12), (YADDI C0, simm12:$imm12)>;
 // TODO: Copied from Zcheripurecap, should be DAG-to-DAG or similar
 def : Pat<(XLenVT (int_cheri_cap_offset_get YGPR:$cs1)),
