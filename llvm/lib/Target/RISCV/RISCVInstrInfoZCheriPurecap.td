@@ -142,6 +142,8 @@ def : InstAlias<"ymodew $rd, $rs1, $rs2", (SCMODE YGPR:$rd, YGPR:$rs1, GPR:$rs2)
 let Predicates = [HasZCheriHybrid] in {
 def MODESW_CAP : CheriModeSwitchInstr<0x9, OPC_OP, "modesw.cap">;
 def MODESW_INT : CheriModeSwitchInstr<0xA, OPC_OP, "modesw.int">;
+def : InstAlias<"ymodeswy", (MODESW_CAP), 0>;
+def : InstAlias<"ymodeswi", (MODESW_INT), 0>;
 } // HasZCheriHybrid
 
 //===----------------------------------------------------------------------===//
