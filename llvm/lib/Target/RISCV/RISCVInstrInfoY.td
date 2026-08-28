@@ -261,10 +261,24 @@ def YAMASK : RVY_r_xx<0b00000, "yamask">;
 let Predicates = [HasStdExtY, NotCapMode] in {
 def LY : RVY_load<0b001, "ly", GPRMem>;
 def SY : RVY_store<0b010, "sy", GPRMem>;
+let EmitPriority = 0 in {
+def : InstAlias<"ly $rd, (${rs1})",
+                (LY  YGPR:$rd, GPR:$rs1, 0)>;
+def : InstAlias<"sy $rs2, (${rs1})",
+                (SY  YGPR:$rs2, GPR:$rs1, 0)>;
 }
-let Predicates = [HasStdExtY, IsCapMode], DecoderNamespace = "CapModeOnly_" in {
+}
+let Predicates = [HasStdExtY, IsCapMode] in {
+let DecoderNamespace = "CapModeOnly_" in {
 def CLY : RVY_load<0b001, "ly", YGPRNoX0Mem>;
 def CSY : RVY_store<0b010, "sy", YGPRNoX0Mem>;
+}
+let EmitPriority = 0 in {
+def : InstAlias<"ly $rd, (${rs1})",
+                (CLY  YGPR:$rd, YGPRNoX0Mem:$rs1, 0)>;
+def : InstAlias<"sy $rs2, (${rs1})",
+                (CSY  YGPR:$rs2, YGPRNoX0Mem:$rs1, 0)>;
+}
 }
 
 //
